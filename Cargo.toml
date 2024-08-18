@@ -19,7 +19,10 @@ ordinals = "0.0.8"
 anyhow = "1.0.86"
 serde = "1.0.208"
 hex = "0.4.3"
-#wasmer-compiler-singlepass-near = "2.4.1"
+wasmi = "0.31.0"
+metashrew-runtime = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
+getrandom = { version = "0.2.15", features = ["js"] }
+web-sys = "0.3.70"
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

@@ -37,9 +37,3 @@ pub fn log(v: Arc<Vec<u8>>) -> () {
         __log(to_ptr(&mut to_arraybuffer_layout(v)) + 4);
     }
 }
-
-
-
-
-
-

@@ -1,4 +1,4 @@
-use crate::stdio::{log};
+use crate::stdio::log;
 use std::panic;
 use std::sync::Arc;
 pub fn panic_hook(info: &panic::PanicInfo) {
@@ -6,7 +6,7 @@ pub fn panic_hook(info: &panic::PanicInfo) {
 }
 
 pub fn to_ptr(v: &mut Vec<u8>) -> i32 {
-  return v.as_mut_ptr() as usize as i32;
+    return v.as_mut_ptr() as usize as i32;
 }
 pub fn to_arraybuffer_layout(v: Arc<Vec<u8>>) -> Vec<u8> {
     let mut buffer = Vec::<u8>::new();

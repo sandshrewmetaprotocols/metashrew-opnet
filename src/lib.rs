@@ -10,15 +10,15 @@ use std::sync::Arc;
 mod bst;
 mod byte_view;
 mod compat;
-mod index_pointer;
-mod stdio;
-mod opnet;
 mod envelope;
+mod index_pointer;
+mod opnet;
+mod stdio;
 use crate::bst::BST;
 use crate::compat::{panic_hook, to_arraybuffer_layout, to_ptr};
 use crate::index_pointer::IndexPointer;
-use crate::stdio::stdout;
 use crate::opnet::index_block;
+use crate::stdio::stdout;
 
 #[link(wasm_import_module = "env")]
 extern "C" {

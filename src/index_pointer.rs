@@ -34,9 +34,9 @@ impl IndexPointer {
     }
     */
     pub fn append(&self, v: Arc<Vec<u8>>) {
-      let length = self.length();
-      self.select_index(length).set(v);
-      self.length_key().set_value::<u32>(length + 1);
+        let length = self.length();
+        self.select_index(length).set(v);
+        self.length_key().set_value::<u32>(length + 1);
     }
     pub fn select(&self, word: &Vec<u8>) -> Self {
         let mut key = (*self.unwrap()).clone();
