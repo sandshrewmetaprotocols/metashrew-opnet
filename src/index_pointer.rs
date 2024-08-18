@@ -22,7 +22,23 @@ impl IndexPointer {
     pub fn get(&self) -> Arc<Vec<u8>> {
         get(self.unwrap())
     }
-    pub fn select(&self, word: &Vec<u8>) -> IndexPointer {
+    /*
+    pub fn length_key() -> Self {
+        self.keyword("/length")
+    }
+    pub fn length() -> u32 {
+      self.length_key().get_value::<u32>()
+    }
+    pub fn select_index(i: u32) -> Self {
+      self.keyword("/").keyword(&i.to_string())
+    }
+    */
+    pub fn append(&self, v: Arc<Vec<u8>>) {
+      let length = self.length();
+      self.select_index(length).set(v);
+      self.length_key().set_value::<u32>(length + 1);
+    }
+    pub fn select(&self, word: &Vec<u8>) -> Self {
         let mut key = (*self.unwrap()).clone();
         key.extend(word);
         return IndexPointer::wrap(&key);
@@ -50,7 +66,7 @@ impl IndexPointer {
     pub fn length<T: ByteView>(&self) -> T {
         self.length_key().get_value()
     }
-    pub fn select_index(&self, index: u32) -> IndexPointer {
+    pub fn select_index(&self, index: u32) -> Self {
         self.keyword(&format!("/{}", index))
     }
 

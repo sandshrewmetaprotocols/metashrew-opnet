@@ -12,10 +12,13 @@ mod byte_view;
 mod compat;
 mod index_pointer;
 mod stdio;
+mod opnet;
+mod envelope;
 use crate::bst::BST;
 use crate::compat::{panic_hook, to_arraybuffer_layout, to_ptr};
 use crate::index_pointer::IndexPointer;
 use crate::stdio::stdout;
+use crate::opnet::index_block;
 
 #[link(wasm_import_module = "env")]
 extern "C" {
@@ -92,15 +95,7 @@ pub extern "C" fn _start() -> () {
     initialize();
     let data = input();
     let mut reader = &data[4..];
-    let block = Block::consensus_decode(&mut reader).unwrap();
-    set(
-        Arc::new(block.block_hash().as_byte_array().to_vec()),
-        Arc::new(data[4..].to_vec()),
-    );
-    println!(
-        "{:x?}",
-        get(Arc::new(block.block_hash().as_byte_array().to_vec()))
-    );
+    index_block(Block::consensus_decode(&mut reader).unwrap()).unwrap();
     flush();
 }
 
