@@ -1,5 +1,5 @@
 [package]
-name = "metashrew-rs"
+name = "metashrew-opnet"
 version = "0.1.0"
 description = "rust version of metashrew"
 repository = "https://github.com/sandshrewmetaprotocols/metashrew-rs"
