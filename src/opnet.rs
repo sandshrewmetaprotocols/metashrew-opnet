@@ -5,7 +5,9 @@ use bitcoin::blockdata::{block::Block, transaction::Transaction};
 use bitcoin::script::Script;
 use hex;
 use std::sync::Arc;
+use std::io::Read;
 use wasmi::*;
+use libflate::zlib::{Encoder, Decoder};
 
 pub fn index_block(block: Block) -> Result<(), anyhow::Error> {
     for transaction in &block.txdata {
@@ -145,13 +147,17 @@ impl OpnetContract {
 pub fn index_transaction(transaction: &Transaction) -> Result<(), anyhow::Error> {
     for envelope in RawEnvelope::from_transaction(transaction) {
         let payload: Arc<Vec<u8>> =
-            Arc::new(envelope.payload.clone().into_iter().flatten().collect());
+            Arc::new(envelope.payload.clone().into_iter().skip(1).flatten().collect());
         if payload.len() > 0 {
             println!("{}", hex::encode(&envelope.payload[0]));
             let address: Vec<u8> = vec![]; //transaction.output[0].into_address();
+            let mut buf = Vec::new();
+            let cloned = payload.clone();
+            let mut decoder: Decoder<&[u8]> = Decoder::new(&cloned[..])?;
+            decoder.read_to_end(&mut buf)?;
             IndexPointer::from_keyword("/programs/")
                 .select(&address)
-                .set(payload.clone());
+                .set(Arc::new(buf));
         }
     }
     Ok(())
