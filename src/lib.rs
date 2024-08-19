@@ -14,6 +14,7 @@ mod envelope;
 mod index_pointer;
 mod opnet;
 mod stdio;
+mod serialization;
 use crate::bst::BST;
 use crate::compat::{panic_hook, to_arraybuffer_layout, to_ptr};
 use crate::index_pointer::IndexPointer;

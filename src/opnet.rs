@@ -113,42 +113,27 @@ impl OpnetContract {
         )?;
         linker.func_wrap(
             "env",
-            "defineSelectors",
+            "deploy",
             |mut caller: Caller<'_, State>, v: i32| {},
         )?;
         linker.func_wrap(
             "env",
-            "readMethod",
+            "deployFromAddress",
             |mut caller: Caller<'_, State>, v: i32| {},
         )?;
         linker.func_wrap(
             "env",
-            "readView",
+            "call",
             |mut caller: Caller<'_, State>, v: i32| {},
         )?;
         linker.func_wrap(
             "env",
-            "getEvents",
+            "log",
             |mut caller: Caller<'_, State>, v: i32| {},
         )?;
         linker.func_wrap(
             "env",
-            "getViewABI",
-            |mut caller: Caller<'_, State>, v: i32| {},
-        )?;
-        linker.func_wrap(
-            "env",
-            "getMethodABI",
-            |mut caller: Caller<'_, State>, v: i32| {},
-        )?;
-        linker.func_wrap(
-            "env",
-            "getWriteMethods",
-            |mut caller: Caller<'_, State>, v: i32| {},
-        )?;
-        linker.func_wrap(
-            "env",
-            "setEnvironment",
+            "encodeAddress",
             |mut caller: Caller<'_, State>, v: i32| {},
         )?;
         Ok(OpnetContract {
