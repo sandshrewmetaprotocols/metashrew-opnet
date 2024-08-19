@@ -1,11 +1,13 @@
 use crate::envelope::RawEnvelope;
 use crate::index_pointer::IndexPointer;
 use anyhow;
+use bech32::{hrp, segwit};
 use bitcoin::blockdata::{block::Block, transaction::Transaction};
 use bitcoin::script::Script;
 use bitcoin::Amount;
 use hex;
 use libflate::zlib::{Decoder, Encoder};
+use ripemd::Ripemd160;
 use sha3::{Digest, Sha3_256};
 use std::collections::HashMap;
 use std::io::Read;
@@ -56,6 +58,12 @@ pub fn get_memory<'a>(caller: &mut Caller<'_, State>) -> Result<Memory, anyhow::
         .ok_or(anyhow::anyhow!("export was not memory region"))
 }
 
+fn to_segwit_address(v: &[u8]) -> Result<Vec<u8>, anyhow::Error> {
+    segwit::encode(hrp::BC, segwit::VERSION_1, v)
+        .map(|v| v.as_str().as_bytes().to_vec())
+        .map_err(|_| anyhow::anyhow!("segwit address encode failed"))
+}
+
 impl OpnetHostFunctionsImpl {
     fn _abort<'a>(mut caller: Caller<'_, State>) {
         OpnetHostFunctionsImpl::abort(caller, 0, 0, 0, 0);
@@ -94,6 +102,14 @@ impl OpnetHostFunctionsImpl {
             Arc::new(read_arraybuffer(mem.data(&caller), v)?)
         });
         Ok(())
+    }
+    fn encode_address(caller: &mut Caller<'_, State>, v: i32) -> Result<i32, anyhow::Error> {
+        let mem = get_memory(caller)?;
+        let input = read_arraybuffer(mem.data(&caller), v)?;
+        let length = u32::from_be_bytes(input[0..4].try_into()?);
+        let mut hasher = Ripemd160::new();
+        hasher.update(&input[4..((4 as usize) + (length as usize))]);
+        send_to_arraybuffer(caller, &to_segwit_address(&hasher.finalize())?)
     }
 }
 
@@ -161,7 +177,15 @@ impl OpnetContract {
         linker.func_wrap(
             "env",
             "encodeAddress",
-            |mut caller: Caller<'_, State>, v: i32| {},
+            |mut caller: Caller<'_, State>, v: i32| -> i32 {
+                match OpnetHostFunctionsImpl::encode_address(&mut caller, v) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        OpnetHostFunctionsImpl::_abort(caller);
+                        return -1;
+                    }
+                }
+            },
         )?;
         Ok(OpnetContract {
             instance: linker.instantiate(&mut store, &module)?,
