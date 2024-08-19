@@ -53,28 +53,6 @@ struct State {
 
 const MEMORY_LIMIT: usize = 33554432;
 
-/*
-fn map_to_abort<'a, P, RT: TryInto<i32>>(
-    func: impl Fn(&mut Caller<'_, State>, P) -> Result<RT, anyhow::Error>,
-) -> impl Fn(&mut Caller<'_, State>, P) -> i32 {
-    |caller: &mut Caller<'_, State>, p: P| -> i32 {
-        match func(caller, p) {
-            Ok(v) => match v.try_into() {
-                Ok(i) => i,
-                Err(e) => {
-                    println!("abort");
-                    -1
-                }
-            },
-            Err(e) => {
-                println!("abort");
-                -1
-            }
-        }
-    }
-    }
-    */
-
 pub struct OpnetHostFunctionsImpl(());
 
 pub fn get_memory<'a>(caller: &mut Caller<'_, State>) -> Result<Memory, anyhow::Error> {
