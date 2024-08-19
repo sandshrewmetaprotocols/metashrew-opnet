@@ -83,10 +83,7 @@ impl OpnetHostFunctionsImpl {
         let mem = get_memory(caller)?;
         let (key, value) = {
             let data = mem.data(&caller);
-            (
-                read_arraybuffer(data, k)?,
-                read_arraybuffer(data, v)?,
-            )
+            (read_arraybuffer(data, k)?, read_arraybuffer(data, v)?)
         };
         caller.data_mut().storage.lock().unwrap().set(&key, &value);
         Ok(())
@@ -210,11 +207,7 @@ pub fn send_to_arraybuffer<'a>(
             &[Value::I32(v.len().try_into()?)],
             &mut result,
         )?;
-    let mem = caller
-        .get_export("memory")
-        .ok_or(anyhow::anyhow!("memory export not found"))?
-        .into_memory()
-        .ok_or(anyhow::anyhow!("memory export not a Memory"))?;
+    let mem = get_memory(caller)?;
     mem.write(&mut *caller, 4, &v.len().to_le_bytes())
         .map_err(|_| anyhow::anyhow!("failed to write ArrayBuffer"))?;
     mem.write(&mut *caller, v.len() + 4, v.as_slice())
