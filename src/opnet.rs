@@ -6,10 +6,12 @@ use bitcoin::script::Script;
 use bitcoin::Amount;
 use hex;
 use libflate::zlib::{Decoder, Encoder};
+use sha3::{Digest, Sha3_256};
+use std::collections::HashMap;
 use std::io::Read;
 use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
 use wasmi::*;
+//use wasmi::module::utils::WasmiValueType;
 
 pub fn index_block(block: Block) -> Result<(), anyhow::Error> {
     for transaction in &block.txdata {
@@ -22,11 +24,8 @@ pub fn try_read_arraybuffer_as_vec(data: &[u8], data_start: i32) -> Result<Vec<u
     if data_start < 4 {
         return Err(anyhow::anyhow!("memory error"));
     }
-    let len = u32::from_le_bytes(
-        (data[((data_start - 4) as usize)..(data_start as usize)])
-            .try_into()
-            .unwrap(),
-    );
+    let len =
+        u32::from_le_bytes((data[((data_start - 4) as usize)..(data_start as usize)]).try_into()?);
     return Ok(Vec::<u8>::from(
         &data[(data_start as usize)..(((data_start as u32) + len) as usize)],
     ));
@@ -51,6 +50,75 @@ struct State {
     storage: Arc<Mutex<StorageView>>,
 }
 
+/*
+fn map_to_abort<'a, P, RT: TryInto<i32>>(
+    func: impl Fn(&mut Caller<'_, State>, P) -> Result<RT, anyhow::Error>,
+) -> impl Fn(&mut Caller<'_, State>, P) -> i32 {
+    |caller: &mut Caller<'_, State>, p: P| -> i32 {
+        match func(caller, p) {
+            Ok(v) => match v.try_into() {
+                Ok(i) => i,
+                Err(e) => {
+                    println!("abort");
+                    -1
+                }
+            },
+            Err(e) => {
+                println!("abort");
+                -1
+            }
+        }
+    }
+    }
+    */
+
+pub struct OpnetHostFunctionsImpl(());
+
+pub fn get_memory<'a>(caller: &mut Caller<'_, State>) -> Result<Memory, anyhow::Error> {
+    caller
+        .get_export("memory")
+        .ok_or(anyhow::anyhow!("export was not memory region"))?
+        .into_memory()
+        .ok_or(anyhow::anyhow!("export was not memory region"))
+}
+
+impl OpnetHostFunctionsImpl {
+    fn _abort<'a>(mut caller: Caller<'_, State>) {
+        OpnetHostFunctionsImpl::abort(caller, 0, 0, 0, 0);
+    }
+    fn abort<'a>(mut caller: Caller<'_, State>, _: i32, _: i32, _: i32, _: i32) {
+        caller.data_mut().had_failure = true;
+    }
+    fn sha256<'a>(caller: &mut Caller<'_, State>, v: i32) -> Result<i32, anyhow::Error> {
+        // handle sha256
+        let mut hasher = Sha3_256::new();
+        let mem = get_memory(caller)?;
+        hasher.update(read_arraybuffer_as_vec(mem.data(&caller), v));
+        send_to_arraybuffer(caller, &hasher.finalize().to_vec())
+    }
+    fn load<'a>(caller: &mut Caller<'_, State>, k: i32) -> Result<i32, anyhow::Error> {
+        let mem = get_memory(caller)?;
+        let key = {
+            let data = mem.data(&caller);
+            try_read_arraybuffer_as_vec(data, k)?
+        };
+        let value = caller.data_mut().storage.lock().unwrap().get(&key);
+        send_to_arraybuffer(caller, &value)
+    }
+    fn store<'a>(caller: &mut Caller<'_, State>, k: i32, v: i32) -> Result<(), anyhow::Error> {
+        let mem = get_memory(caller)?;
+        let (key, value) = {
+            let data = mem.data(&caller);
+            (
+                read_arraybuffer_as_vec(data, k),
+                read_arraybuffer_as_vec(data, v),
+            )
+        };
+        caller.data_mut().storage.lock().unwrap().set(&key, &value);
+        Ok(())
+    }
+}
+
 impl OpnetContract {
     pub fn load(address: &Vec<u8>, program: &Vec<u8>) -> Result<Self, anyhow::Error> {
         let engine = Engine::default();
@@ -70,80 +138,55 @@ impl OpnetContract {
         let cloned = program.clone();
         let module = Module::new(&engine, &mut &cloned[..])?;
         let mut linker: Linker<State> = Linker::<State>::new(&engine);
-        linker.func_wrap(
-            "env",
-            "abort",
-            |mut caller: Caller<'_, State>, _: i32, _: i32, _: i32, _: i32| {
-                caller.data_mut().had_failure = true;
-            },
-        )?;
-        linker.func_wrap(
-            "env",
-            "sha256",
-            |mut caller: Caller<'_, State>, v: i32| -> i32 {
-                // handle sha256
-                0
-            },
-        )?;
-        linker.func_wrap(
-            "env",
-            "load",
-            |mut caller: Caller<'_, State>, v: i32| -> i32 {
-                let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
-                let key = {
-                 let data = mem.data(&caller);
-                 read_arraybuffer_as_vec(data, v)
-                };
-                let value = caller.data_mut().storage.lock().unwrap().get(&key);
-                // TODO: return value from storage
-                0
-            },
-        )?;
+        linker.func_wrap("env", "abort", OpnetHostFunctionsImpl::abort)?;
+        linker.func_wrap("env", "sha256", |mut caller: Caller<'_, State>, v: i32| {
+            match OpnetHostFunctionsImpl::sha256(&mut caller, v) {
+                Ok(v) => v,
+                Err(e) => {
+                    OpnetHostFunctionsImpl::_abort(caller);
+                    return -1;
+                }
+            }
+        })?;
+        linker.func_wrap("env", "load", |mut caller: Caller<'_, State>, k: i32| {
+            match OpnetHostFunctionsImpl::load(&mut caller, k) {
+                Ok(v) => v,
+                Err(e) => {
+                    OpnetHostFunctionsImpl::_abort(caller);
+                    return -1;
+                }
+            }
+        })?;
         linker.func_wrap(
             "env",
             "store",
             |mut caller: Caller<'_, State>, k: i32, v: i32| {
-                let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
-                let (key, value) = {
-                  let data = mem.data(&caller);
-                  (read_arraybuffer_as_vec(data, k), read_arraybuffer_as_vec(data, v))
-                };
-                caller.data_mut().storage.lock().unwrap().set(&key, &value);
+                if let Err(e) = OpnetHostFunctionsImpl::store(&mut caller, k, v) {
+                    OpnetHostFunctionsImpl::_abort(caller);
+                }
             },
         )?;
-        linker.func_wrap(
-            "env",
-            "deploy",
-            |mut caller: Caller<'_, State>, v: i32| {},
-        )?;
+        linker.func_wrap("env", "deploy", |mut caller: Caller<'_, State>, v: i32| {})?;
         linker.func_wrap(
             "env",
             "deployFromAddress",
             |mut caller: Caller<'_, State>, v: i32| {},
         )?;
-        linker.func_wrap(
-            "env",
-            "call",
-            |mut caller: Caller<'_, State>, v: i32| {},
-        )?;
-        linker.func_wrap(
-            "env",
-            "log",
-            |mut caller: Caller<'_, State>, v: i32| {},
-        )?;
+        linker.func_wrap("env", "call", |mut caller: Caller<'_, State>, v: i32| {})?;
+        linker.func_wrap("env", "log", |mut caller: Caller<'_, State>, v: i32| {})?;
         linker.func_wrap(
             "env",
             "encodeAddress",
             |mut caller: Caller<'_, State>, v: i32| {},
         )?;
         Ok(OpnetContract {
-          instance: linker.instantiate(&mut store, &module)?,
-          store,
-          storage: storage.clone()
+            instance: linker.instantiate(&mut store, &module)?,
+            store,
+            storage: storage.clone(),
         })
     }
     pub fn reset(&mut self) {
-      self.store.data_mut().had_failure = false;
+        self.store.data_mut().had_failure = false;
     }
     pub fn run(&mut self, calldata: Vec<u8>) -> Result<(), anyhow::Error> {
         // TODO: supply calldata, determine the entrypoint of WASM files for OP_NET contracts, write
@@ -151,9 +194,9 @@ impl OpnetContract {
         let had_failure = self.store.data().had_failure;
         self.reset();
         if had_failure {
-          return Err(anyhow::anyhow!("OP_NET: revert"));
+            return Err(anyhow::anyhow!("OP_NET: revert"));
         } else {
-          return Ok(())
+            return Ok(());
         }
     }
 }
@@ -161,6 +204,38 @@ impl OpnetContract {
 pub struct StorageView {
     cache: HashMap<Vec<u8>, Vec<u8>>,
     table: IndexPointer,
+}
+
+pub fn send_to_arraybuffer<'a>(
+    caller: &mut Caller<'_, State>,
+    v: &Vec<u8>,
+) -> Result<i32, anyhow::Error> {
+    let mut result = [Value::I32(0)];
+    caller
+        .get_export("__new")
+        .ok_or(anyhow::anyhow!(
+            "__new export not found -- is this WASM built with --exportRuntime?"
+        ))?
+        .into_func()
+        .ok_or(anyhow::anyhow!("__new export not a Func"))?
+        .call(
+            &mut *caller,
+            &[Value::I32(v.len().try_into()?)],
+            &mut result,
+        )?;
+    let mem = caller
+        .get_export("memory")
+        .ok_or(anyhow::anyhow!("memory export not found"))?
+        .into_memory()
+        .ok_or(anyhow::anyhow!("memory export not a Memory"))?;
+    mem.write(&mut *caller, 4, &v.len().to_le_bytes())
+        .map_err(|_| anyhow::anyhow!("failed to write ArrayBuffer"))?;
+    mem.write(&mut *caller, v.len() + 4, v.as_slice())
+        .map_err(|_| anyhow::anyhow!("failed to write ArrayBuffer"))?;
+    return Ok(result[0]
+        .i32()
+        .ok_or(anyhow::anyhow!("result was not an i32"))?
+        + 4);
 }
 
 impl StorageView {
@@ -172,7 +247,7 @@ impl StorageView {
     }
     pub fn get(&self, k: &Vec<u8>) -> Vec<u8> {
         if let Some(value) = self.cache.get(k) {
-          value.clone()
+            value.clone()
         } else {
             (*self.table.select(k).get()).clone()
         }
@@ -182,8 +257,8 @@ impl StorageView {
     }
     pub fn flush(&mut self) {
         self.cache.clone().iter().for_each(|(k, v)| {
-          self.table.select(k).set(Arc::new(v.clone()));
-          self.cache.remove(k);
+            self.table.select(k).set(Arc::new(v.clone()));
+            self.cache.remove(k);
         });
     }
 }
@@ -213,11 +288,11 @@ pub fn index_transaction(transaction: &Transaction) -> Result<(), anyhow::Error>
             } else {
                 if let Ok(mut vm) = OpnetContract::load(&script_pubkey, &program) {
                     match vm.run((*payload).clone()) {
-                      Ok(_) => {
-                        println!("OP_NET: transaction success");
-                        vm.storage.lock().unwrap().flush(); // transaction success -- save updated storage slots
-                      },
-                      Err(e) => println!("{}", e)
+                        Ok(_) => {
+                            println!("OP_NET: transaction success");
+                            vm.storage.lock().unwrap().flush(); // transaction success -- save updated storage slots
+                        }
+                        Err(e) => println!("{}", e),
                     };
                 }
             }

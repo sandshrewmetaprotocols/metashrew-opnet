@@ -22,6 +22,8 @@ hex = "0.4.3"
 wasmi = "0.31.0"
 libflate = "2.1.0"
 ruint = "1.12.3"
+wasmi_core = "0.36.0"
+sha3 = "0.10.8"
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
