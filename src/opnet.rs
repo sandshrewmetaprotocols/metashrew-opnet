@@ -48,7 +48,10 @@ struct State {
     address: Vec<u8>,
     had_failure: bool,
     storage: Arc<Mutex<StorageView>>,
+    limiter: StoreLimits,
 }
+
+const MEMORY_LIMIT: usize = 33554432;
 
 /*
 fn map_to_abort<'a, P, RT: TryInto<i32>>(
@@ -132,9 +135,11 @@ impl OpnetContract {
             State {
                 address: address.clone(),
                 had_failure: false,
+                limiter: StoreLimitsBuilder::new().memory_size(MEMORY_LIMIT).build(),
                 storage: storage.clone(),
             },
         );
+        store.limiter(|state| &mut state.limiter);
         let cloned = program.clone();
         let module = Module::new(&engine, &mut &cloned[..])?;
         let mut linker: Linker<State> = Linker::<State>::new(&engine);
