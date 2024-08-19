@@ -146,6 +146,11 @@ impl OpnetContract {
                 }
             },
         )?;
+        linker.func_wrap("env", "log", |mut caller: Caller<'_, State>, v: i32| {
+            if let Err(e) = OpnetHostFunctionsImpl::log(&mut caller, v) {
+                OpnetHostFunctionsImpl::_abort(caller);
+            }
+        })?;
         linker.func_wrap("env", "deploy", |mut caller: Caller<'_, State>, v: i32| {})?;
         linker.func_wrap(
             "env",
@@ -153,11 +158,6 @@ impl OpnetContract {
             |mut caller: Caller<'_, State>, v: i32| {},
         )?;
         linker.func_wrap("env", "call", |mut caller: Caller<'_, State>, v: i32| {})?;
-        linker.func_wrap("env", "log", |mut caller: Caller<'_, State>, v: i32| {
-            if let Err(e) = OpnetHostFunctionsImpl::log(&mut caller, v) {
-                OpnetHostFunctionsImpl::_abort(caller);
-            }
-        })?;
         linker.func_wrap(
             "env",
             "encodeAddress",
