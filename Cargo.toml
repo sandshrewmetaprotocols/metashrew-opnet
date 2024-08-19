@@ -21,6 +21,7 @@ serde = "1.0.208"
 hex = "0.4.3"
 wasmi = "0.31.0"
 libflate = "2.1.0"
+ruint = "1.12.3"
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
