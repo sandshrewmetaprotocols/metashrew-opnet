@@ -20,7 +20,7 @@ pub fn index_block(block: Block) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-pub fn try_read_arraybuffer_as_vec(data: &[u8], data_start: i32) -> Result<Vec<u8>, anyhow::Error> {
+pub fn read_arraybuffer(data: &[u8], data_start: i32) -> Result<Vec<u8>, anyhow::Error> {
     if data_start < 4 {
         return Err(anyhow::anyhow!("memory error"));
     }
@@ -29,13 +29,6 @@ pub fn try_read_arraybuffer_as_vec(data: &[u8], data_start: i32) -> Result<Vec<u
     return Ok(Vec::<u8>::from(
         &data[(data_start as usize)..(((data_start as u32) + len) as usize)],
     ));
-}
-
-pub fn read_arraybuffer_as_vec(data: &[u8], data_start: i32) -> Vec<u8> {
-    match try_read_arraybuffer_as_vec(data, data_start) {
-        Ok(v) => v,
-        Err(_) => Vec::<u8>::new(),
-    }
 }
 
 struct OpnetContract {
@@ -74,14 +67,14 @@ impl OpnetHostFunctionsImpl {
         // handle sha256
         let mut hasher = Sha3_256::new();
         let mem = get_memory(caller)?;
-        hasher.update(read_arraybuffer_as_vec(mem.data(&caller), v));
+        hasher.update(read_arraybuffer(mem.data(&caller), v)?);
         send_to_arraybuffer(caller, &hasher.finalize().to_vec())
     }
     fn load<'a>(caller: &mut Caller<'_, State>, k: i32) -> Result<i32, anyhow::Error> {
         let mem = get_memory(caller)?;
         let key = {
             let data = mem.data(&caller);
-            try_read_arraybuffer_as_vec(data, k)?
+            read_arraybuffer(data, k)?
         };
         let value = caller.data_mut().storage.lock().unwrap().get(&key);
         send_to_arraybuffer(caller, &value)
@@ -91,8 +84,8 @@ impl OpnetHostFunctionsImpl {
         let (key, value) = {
             let data = mem.data(&caller);
             (
-                try_read_arraybuffer_as_vec(data, k)?,
-                try_read_arraybuffer_as_vec(data, v)?,
+                read_arraybuffer(data, k)?,
+                read_arraybuffer(data, v)?,
             )
         };
         caller.data_mut().storage.lock().unwrap().set(&key, &value);
@@ -101,7 +94,7 @@ impl OpnetHostFunctionsImpl {
     fn log<'a>(caller: &mut Caller<'_, State>, v: i32) -> Result<(), anyhow::Error> {
         crate::stdio::log({
             let mem = get_memory(caller)?;
-            Arc::new(try_read_arraybuffer_as_vec(mem.data(&caller), v)?)
+            Arc::new(read_arraybuffer(mem.data(&caller), v)?)
         });
         Ok(())
     }
