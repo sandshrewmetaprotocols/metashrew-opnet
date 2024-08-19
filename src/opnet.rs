@@ -91,11 +91,18 @@ impl OpnetHostFunctionsImpl {
         let (key, value) = {
             let data = mem.data(&caller);
             (
-                read_arraybuffer_as_vec(data, k),
-                read_arraybuffer_as_vec(data, v),
+                try_read_arraybuffer_as_vec(data, k)?,
+                try_read_arraybuffer_as_vec(data, v)?,
             )
         };
         caller.data_mut().storage.lock().unwrap().set(&key, &value);
+        Ok(())
+    }
+    fn log<'a>(caller: &mut Caller<'_, State>, v: i32) -> Result<(), anyhow::Error> {
+        crate::stdio::log({
+            let mem = get_memory(caller)?;
+            Arc::new(try_read_arraybuffer_as_vec(mem.data(&caller), v)?)
+        });
         Ok(())
     }
 }
@@ -156,7 +163,11 @@ impl OpnetContract {
             |mut caller: Caller<'_, State>, v: i32| {},
         )?;
         linker.func_wrap("env", "call", |mut caller: Caller<'_, State>, v: i32| {})?;
-        linker.func_wrap("env", "log", |mut caller: Caller<'_, State>, v: i32| {})?;
+        linker.func_wrap("env", "log", |mut caller: Caller<'_, State>, v: i32| {
+            if let Err(e) = OpnetHostFunctionsImpl::log(&mut caller, v) {
+                OpnetHostFunctionsImpl::_abort(caller);
+            }
+        })?;
         linker.func_wrap(
             "env",
             "encodeAddress",
