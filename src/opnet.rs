@@ -231,17 +231,17 @@ pub struct OpnetExportsImpl(());
 pub struct OpnetEvent {
   pub data: Vec<u8>,
   pub selector: u64,
-  pub eventType: String,
+  pub event_type: String,
 }
 
 impl OpnetExportsImpl {
     pub fn read_method(method: &Vec<u8>, data: &Vec<u8>) -> Result<Vec<u8>> {
-        Ok()
+        Ok(vec![])
     }
     pub fn read_view(method: &Vec<u8>, data: &Vec<u8>) -> Result<Vec<u8>> {
         Ok(vec![])
     }
-    pub fn get_events(vm: &mut OpnetContract) -> Result<OpnetEvent> {
+    pub fn get_events(vm: &mut OpnetContract) -> Result<Vec<OpnetEvent>> {
         let mut result: [ Val; 1 ] = [ Val::I32(0) ];
         
         vm.instance
@@ -250,16 +250,18 @@ impl OpnetExportsImpl {
             .map_err(|_| {
                 anyhow!("getEvents not found -- is this WASM built with the OP_NET SDK?")
             })?
-            .call(&mut vm.store, &[], &mut result)?
-        let mut reader = BytesReader::from(&vm.read_arraybuffer(result[0]));
+            .call(&mut vm.store, &[], &mut result)?;
+        let buffer = vm.read_arraybuffer(result[0].i32().ok_or("").map_err(|_| anyhow!("result is not an i32"))?)?;
+        let mut reader = BytesReader::from(&buffer);
         let length = reader.read_u16()?;
         let mut events: Vec<OpnetEvent> = vec![];
         for i in (0..length) {
-          let eventType: String = reader.read_string_with_length()?;
+          let event_type: String = reader.read_string_with_length()?;
           let selector: u64 = reader.read_u64()?;
           let data: Vec<u8> = reader.read_bytes_with_length()?;
+          if (data.len() > MAX_EVENT_DATA_SIZE as usize) { return Err(anyhow!("exceeded MAX_EVENT_DATA_SIZE")); }
           events.push(OpnetEvent {
-            eventType,
+            event_type,
             selector,
             data
           });
@@ -269,7 +271,7 @@ impl OpnetExportsImpl {
     pub fn get_view_abi() -> Result<Vec<u8>> {
         Ok(vec![])
     }
-    pub fn _get_abi(name: &str) -> Result<Vec<u32>> {
+    pub fn _get_abi(vm: &mut OpnetContract, name: &str) -> Result<Vec<u32>> {
         let mut result: [ Val; 1 ] = [ Val::I32(0) ];
         
         vm.instance
@@ -278,20 +280,21 @@ impl OpnetExportsImpl {
             .map_err(|_| {
                 anyhow!(format!("{} not found -- is this WASM built with the OP_NET SDK?", name))
             })?
-            .call(&mut vm.store, &[], &mut result)?
-        let mut reader = BytesReader::from(&vm.read_arraybuffer(result[0]));
+            .call(&mut vm.store, &[], &mut result)?;
+        let buffer = vm.read_arraybuffer(result[0].i32().ok_or("").map_err(|_| anyhow!("result is not an i32"))?)?;
+        let mut reader = BytesReader::from(&buffer);
         let length = reader.read_u16()?;
         let mut result: Vec<u32> = vec![];
         for i in (0..length) {
           result.push(reader.read_u32()?);
         }
-        Ok(result);
+        Ok(result)
     }
-    pub fn get_method_abi() -> Result<Vec<u32>> {
-      self._get_abi("getMethodABI")
+    pub fn get_method_abi(vm: &mut OpnetContract) -> Result<Vec<u32>> {
+      Self::_get_abi(vm, "getMethodABI")
     }
-    pub fn get_write_methods() -> Result<Vec<u8>> {
-      self._get_abi("getWriteMethods")
+    pub fn get_write_methods(vm: &mut OpnetContract) -> Result<Vec<u32>> {
+      Self::_get_abi(vm, "getWriteMethods")
     }
     pub fn set_environment(vm: &mut OpnetContract) -> Result<()> {
         let ptr: i32 = {
@@ -311,7 +314,7 @@ impl OpnetExportsImpl {
 
 impl OpnetContract {
     pub fn read_arraybuffer(&mut self, data_start: i32) -> anyhow::Result<Vec<u8>> {
-        read_arraybuffer(self.get_memory().data(&self.store), data_start)
+        read_arraybuffer(self.get_memory()?.data(&self.store), data_start)
     }
     pub fn get_memory(&mut self) -> anyhow::Result<Memory> {
       self.instance.get_memory(&mut self.store, "memory").ok_or("").map_err(|_| anyhow!("memory segment not found"))
@@ -335,7 +338,7 @@ impl OpnetContract {
             .map_err(|_| anyhow!("result of __new is not an i32"))?
             as usize;
         let mem = self
-            .get_memory()?
+            .get_memory()?;
         mem.write(&mut self.store, ptr, &v.len().to_le_bytes())
             .map_err(|_| anyhow!("failed to write ArrayBuffer"))?;
         mem.write(&mut self.store, ptr + 4, v.as_slice())

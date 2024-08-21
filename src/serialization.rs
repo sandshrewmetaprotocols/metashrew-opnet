@@ -187,6 +187,10 @@ impl<'a> BytesReader<'a> {
     pub fn read_address(&mut self) -> Result<String> {
         self.read_string(ADDRESS_BYTE_LENGTH)
     }
+    pub fn read_string_with_length(&mut self) -> Result<String> {
+      let length = self.read_u16()? as usize;
+      Ok(self.read_string(length)?)
+    }
     pub fn read_bytes(&mut self, length: usize) -> Result<Vec<u8>> {
         let result = (&self.slice[(self.pos)..(self.pos + length)]).try_into()?;
         self.pos = self.pos + length;
