@@ -43,6 +43,7 @@ struct State {
     address: Vec<u8>,
     had_failure: bool,
     storage: Arc<Mutex<StorageView>>,
+    call_stack: HashSet<Vec<u8>>,
     limiter: StoreLimits,
 }
 
@@ -64,6 +65,8 @@ fn to_segwit_address(v: &[u8]) -> Result<Vec<u8>, anyhow::Error> {
         .map_err(|_| anyhow::anyhow!("segwit address encode failed"))
 }
 
+fn 
+
 impl OpnetHostFunctionsImpl {
     fn _abort<'a>(mut caller: Caller<'_, State>) {
         OpnetHostFunctionsImpl::abort(caller, 0, 0, 0, 0);
@@ -82,19 +85,35 @@ impl OpnetHostFunctionsImpl {
         let mem = get_memory(caller)?;
         let key = {
             let data = mem.data(&caller);
-            read_arraybuffer(data, k)?
+            BytesReader::from(read_arraybuffer(data, k)?).read_u256()?
         };
-        let value = caller.data_mut().storage.lock().unwrap().get(&key);
+        let value = caller.data_mut().storage.lock().unwrap().get(&key.to_be_bytes());
         send_to_arraybuffer(caller, &value)
     }
-    fn store<'a>(caller: &mut Caller<'_, State>, k: i32, v: i32) -> Result<(), anyhow::Error> {
+    fn store<'a>(caller: &mut Caller<'_, State>, k: i32) -> Result<(), anyhow::Error> {
         let mem = get_memory(caller)?;
         let (key, value) = {
-            let data = mem.data(&caller);
-            (read_arraybuffer(data, k)?, read_arraybuffer(data, v)?)
+            let reader = BytesReader::from(&read_arraybuffer(mem.data(&caller), k)?);
+            (reader.read_u256(), reader.read_u256())
         };
-        caller.data_mut().storage.lock().unwrap().set(&key, &value);
+        caller.data_mut().storage.lock().unwrap().set(&key.to_be_bytes(), &value.to_be_bytes());
         Ok(())
+    }
+    fn call<'a>(caller: &mut Caller<'_, State>, data: i32) -> Result<i32, anyhow::Error> {
+      let reader = BytesReader::from(&read_arraybuffer(mem.data(&caller), data)?);
+      let (contract_address, calldata) = (reader.read_address(), reader.read_bytes_with_length());
+      if let Some(v) = caller.data().call_stack.get(contract_address) {
+        return Err(anyhow!("failure -- reentrancy guard"))
+      }
+      match OpnetContract::get(&contract_address)? {
+        None => Err(anyhow!(format!("failed to call non-existent contract at address {}", contract_address.to_string())))
+        Some(mut vm) => {
+          vm.set_caller(vec![]); // TODO: implement
+          vm.store.data_mut().address = contract_address.clone();
+          let call_response = vm.run(&calldata)
+          // TODO: encode response
+        }
+      }
     }
     fn log<'a>(caller: &mut Caller<'_, State>, v: i32) -> Result<(), anyhow::Error> {
         crate::stdio::log({
@@ -105,15 +124,25 @@ impl OpnetHostFunctionsImpl {
     }
     fn encode_address(caller: &mut Caller<'_, State>, v: i32) -> Result<i32, anyhow::Error> {
         let mem = get_memory(caller)?;
-        let input = read_arraybuffer(mem.data(&caller), v)?;
-        let length = u32::from_be_bytes(input[0..4].try_into()?);
-        let mut hasher = Ripemd160::new();
-        hasher.update(&input[4..((4 as usize) + (length as usize))]);
-        send_to_arraybuffer(caller, &to_segwit_address(&hasher.finalize())?)
+        let input = BytesReader::from(read_arraybuffer(mem.data(&caller), v)?).read_bytes_with_length()?;
+        send_to_arraybuffer(caller, &script_pubkey_to_address(&input))
     }
 }
 
+fn script_pubkey_to_address(input: &[u8]) -> Result<Vec<u8>> {
+  let mut hasher = Ripemd160::new();
+  hasher.update(&input);
+  to_segwit_address(&hasher.finalize())
+}
+
 impl OpnetContract {
+    pub fn get(address: &Vec<u8>) -> Result<Option<Self>, anyhow::Error> {
+      let saved = IndexPointer::from_keyword("/contracts/").select(address).get();
+      if saved.len() == 0 { Ok(None) }
+      else {
+        Ok(Some(Self::load(address, &saved)?))
+      }
+    }
     pub fn load(address: &Vec<u8>, program: &Vec<u8>) -> Result<Self, anyhow::Error> {
         let engine = Engine::default();
         let storage = Arc::new(Mutex::new(StorageView::at(
@@ -127,6 +156,7 @@ impl OpnetContract {
                 address: address.clone(),
                 had_failure: false,
                 limiter: StoreLimitsBuilder::new().memory_size(MEMORY_LIMIT).build(),
+                call_stack: HashMap::<Vec<u8>>::new(),
                 storage: storage.clone(),
             },
         );
@@ -140,7 +170,7 @@ impl OpnetContract {
                 Ok(v) => v,
                 Err(e) => {
                     OpnetHostFunctionsImpl::_abort(caller);
-                    return -1;
+                    -1
                 }
             }
         })?;
@@ -149,7 +179,7 @@ impl OpnetContract {
                 Ok(v) => v,
                 Err(e) => {
                     OpnetHostFunctionsImpl::_abort(caller);
-                    return -1;
+                    -1
                 }
             }
         })?;
@@ -182,7 +212,7 @@ impl OpnetContract {
                     Ok(v) => v,
                     Err(_) => {
                         OpnetHostFunctionsImpl::_abort(caller);
-                        return -1;
+                        -1
                     }
                 }
             },
@@ -197,8 +227,8 @@ impl OpnetContract {
         self.store.data_mut().had_failure = false;
     }
     pub fn run(&mut self, calldata: Vec<u8>) -> Result<(), anyhow::Error> {
-        // TODO: supply calldata, determine the entrypoint of WASM files for OP_NET contracts, write
-        // code here to invoke it
+        // TODO: call setEnvironment
+        // invoke entrypoint
         let had_failure = self.store.data().had_failure;
         self.reset();
         if had_failure {
@@ -281,7 +311,8 @@ pub fn index_transaction(transaction: &Transaction) -> Result<(), anyhow::Error>
         if payload.len() > 0 && transaction.output[0].value > Amount::from_sat(330) {
             //            println!("{}", hex::encode(&envelope.payload[0]));
             let script_pubkey: Vec<u8> = transaction.output[0].script_pubkey.clone().into(); //transaction.output[0].into_address();
-            let table_entry = IndexPointer::from_keyword("/contracts/").select(&script_pubkey);
+                                                                                            let address = script_pubkey_to_address(&script_pubkey)?;
+            let table_entry = IndexPointer::from_keyword("/contracts/").select(&address);
             let program = table_entry.get();
             if (program.len() == 0) {
                 let mut buf = Vec::new();
@@ -290,7 +321,7 @@ pub fn index_transaction(transaction: &Transaction) -> Result<(), anyhow::Error>
                 decoder.read_to_end(&mut buf)?;
                 table_entry.set(Arc::new(buf));
             } else {
-                if let Ok(mut vm) = OpnetContract::load(&script_pubkey, &program) {
+                if let Ok(mut vm) = OpnetContract::load(&address, &program) {
                     match vm.run((*payload).clone()) {
                         Ok(_) => {
                             println!("OP_NET: transaction success");
