@@ -282,7 +282,7 @@ impl OpnetContract {
             .instance
             .get_memory(&mut self.store, "memory")
             .ok_or("")
-            .map_err(|_| anyhow!("memory segment not foudn"))?;
+            .map_err(|_| anyhow!("memory segment not found"))?;
         mem.write(&mut self.store, ptr, &v.len().to_le_bytes())
             .map_err(|_| anyhow!("failed to write ArrayBuffer"))?;
         mem.write(&mut self.store, ptr + 4, v.as_slice())
@@ -406,8 +406,11 @@ impl OpnetContract {
     }
 }
 
+pub type Address = Vec<u8>;
+pub type StorageCache = HashMap<Vec<u8>, Vec<u8>>;
+
 pub struct StorageView {
-    cache: HashMap<Vec<u8>, Vec<u8>>,
+    cache: StorageCache,
     table: IndexPointer,
 }
 
