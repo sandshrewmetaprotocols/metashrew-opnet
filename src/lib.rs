@@ -105,7 +105,7 @@ pub extern "C" fn _test() -> () {
     initialize();
     let data = input();
     let mut reader = &data[4..];
-    let bst = BST::<u8>::new(IndexPointer::from_keyword("test"));
+    let _bst = BST::<u8>::new(IndexPointer::from_keyword("test"));
     let block = Block::consensus_decode(&mut reader).unwrap();
     set(
         Arc::new(block.block_hash().as_byte_array().to_vec()),

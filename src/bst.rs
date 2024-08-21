@@ -12,7 +12,7 @@ pub struct BST<K> {
     _val: K,
 }
 
-pub fn maskLowerThan(v: Arc<Vec<u8>>, position: usize) -> Arc<Vec<u8>> {
+pub fn mask_lower_than(v: Arc<Vec<u8>>, position: usize) -> Arc<Vec<u8>> {
     let mut ar: [u128; 2] = [0, 0];
     ar[0] = u128::from_le_bytes(v.clone().as_slice()[0..16].try_into().unwrap());
     ar[1] = u128::from_le_bytes(v.clone().as_slice()[16..32].try_into().unwrap());
@@ -32,7 +32,7 @@ pub fn maskLowerThan(v: Arc<Vec<u8>>, position: usize) -> Arc<Vec<u8>> {
     Arc::from(_vec)
 }
 
-pub fn maskGreaterThan(v: Arc<Vec<u8>>, position: usize) -> Arc<Vec<u8>> {
+pub fn mask_greater_than(v: Arc<Vec<u8>>, position: usize) -> Arc<Vec<u8>> {
     let mut ar: [u128; 2] = [0, 0];
     ar[0] = u128::from_le_bytes(v.clone().as_slice()[0..16].try_into().unwrap());
     ar[1] = u128::from_le_bytes(v.clone().as_slice()[16..32].try_into().unwrap());
@@ -210,7 +210,7 @@ where
             }
         }
     }
-    fn _find_boundary_from_partial(&self, key_bytes: Vec<u8>, seek_higher: bool) -> K {
+    fn _find_boundary_from_partial(&self, _key_bytes: Vec<u8>, _seek_higher: bool) -> K {
         K::from_bytes(vec![0])
     }
     pub fn seek_lower(&self, start: K) -> K {
@@ -219,7 +219,7 @@ where
             let this_key = shrink_back(partial_key.clone(), 1);
             let mask = self.get_mask_pointer(this_key.clone()).get();
             if mask.len() > 0 {
-                let derived_mask = maskLowerThan(mask, partial_key[this_key.len()].into());
+                let derived_mask = mask_lower_than(mask, partial_key[this_key.len()].into());
                 self.get_mask_pointer(this_key.clone())
                     .set(derived_mask.clone());
                 let derived_mask_value = Arc::try_unwrap(derived_mask).unwrap();
@@ -244,7 +244,7 @@ where
             let this_key = shrink_back(partial_key.clone(), 1);
             let mask = self.get_mask_pointer(this_key.clone()).get();
             if mask.len() > 0 {
-                let derived_mask = maskGreaterThan(mask, partial_key[this_key.len()].into());
+                let derived_mask = mask_greater_than(mask, partial_key[this_key.len()].into());
                 self.get_mask_pointer(this_key.clone())
                     .set(derived_mask.clone());
                 let derived_mask_value = Arc::try_unwrap(derived_mask).unwrap();
@@ -280,5 +280,5 @@ where
         let key_bytes = usize::from_bytes(key);
         Arc::try_unwrap(self.ptr.select(&usize::to_bytes(key_bytes)).get()).unwrap()
     }
-    pub fn nullify(key: K) {}
+    pub fn nullify(_key: K) {}
 }

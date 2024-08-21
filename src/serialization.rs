@@ -71,7 +71,7 @@ impl BytesWriter {
         self.write_u8(OpnetBufferDataType::ADDRESS as u8);
         self.write_bytes(&self.from_address(v));
     }
-    pub fn from_address(&self, v: &Address) -> Vec<u8> {
+    pub fn from_address(&self, _v: &Address) -> Vec<u8> {
         vec![]
     }
     pub fn write_string_with_length(&mut self, v: &String) {
@@ -123,7 +123,7 @@ impl<'a> BytesReader<'a> {
     self.pos = self.pos + 32;
     Ok(value)
   }
-  pub fn read_string(&mut self, len: usize) -> Result<String> {
+  pub fn read_string(&mut self, _len: usize) -> Result<String> {
     let value = unsafe { str_from_null_terminated_utf8((&self.slice[(self.pos)..]).as_ptr() as *const u8)? };
     self.pos = self.pos + value.as_str().as_bytes().to_vec().len();
     Ok(value)

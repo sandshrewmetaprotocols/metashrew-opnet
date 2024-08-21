@@ -63,7 +63,7 @@ impl ByteView for u64 {
 
 impl ByteView for u128 {
     fn to_bytes(v: u128) -> Vec<u8> {
-        let x = v.to_le_bytes();
+        let _x = v.to_le_bytes();
         Vec::<u8>::from(v.to_le_bytes())
     }
     fn from_bytes(v: Vec<u8>) -> u128 {
