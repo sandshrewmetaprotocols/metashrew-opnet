@@ -115,15 +115,15 @@ pub struct OpnetHostFunctionsImpl(());
 pub fn get_memory<'a>(caller: &mut Caller<'_, State>) -> Result<Memory> {
     caller
         .get_export("memory")
-        .ok_or(anyhow::anyhow!("export was not memory region"))?
+        .ok_or(anyhow!("export was not memory region"))?
         .into_memory()
-        .ok_or(anyhow::anyhow!("export was not memory region"))
+        .ok_or(anyhow!("export was not memory region"))
 }
 
 fn to_segwit_address(v: &[u8]) -> Result<Vec<u8>> {
     segwit::encode(hrp::BC, segwit::VERSION_1, v)
         .map(|v| v.as_str().as_bytes().to_vec())
-        .map_err(|_| anyhow::anyhow!("segwit address encode failed"))
+        .map_err(|_| anyhow!("segwit address encode failed"))
 }
 
 impl OpnetHostFunctionsImpl {
