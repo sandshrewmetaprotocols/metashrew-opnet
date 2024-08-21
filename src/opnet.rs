@@ -190,7 +190,7 @@ impl OpnetHostFunctionsImpl {
                     environment.set_contract_address(&contract_address);
                     vm.store.data_mut().environment = environment;
                 }
-                vm.invoke_set_environment()?;
+                OpnetExportsImpl::set_environment(&mut vm)?;
                 let call_response = vm.run(calldata)?;
                 send_to_arraybuffer(caller, &call_response.response)
                 // TODO: encode response
@@ -222,22 +222,71 @@ struct CallResponse {
     pub response: Vec<u8>,
 }
 
+pub struct OpnetExportsImpl(());
+
+impl OpnetExportsImpl {
+    pub fn read_method(method: &Vec<u8>, data: &Vec<u8>) -> Result<Vec<u8>> {
+        Ok(vec![])
+    }
+    pub fn read_view(method: &Vec<u8>, data: &Vec<u8>) -> Result<Vec<u8>> {
+        Ok(vec![])
+    }
+    pub fn get_events() -> Result<Vec<u8>> {
+        Ok(vec![])
+    }
+    pub fn get_view_abi() -> Result<Vec<u8>> {
+        Ok(vec![])
+    }
+    pub fn get_method_abi() -> Result<Vec<u8>> {
+        Ok(vec![])
+    }
+    pub fn get_write_methods() -> Result<Vec<u8>> {
+        Ok(vec![])
+    }
+    pub fn set_environment(vm: &mut OpnetContract) -> Result<()> {
+        let ptr: i32 = {
+            let input: Vec<u8> = vm.store.data_mut().environment.clone().into();
+            vm.send_to_arraybuffer(&input)?
+        };
+        Ok(vm
+            .instance
+            .get_func(&mut vm.store, "setEnvironment")
+            .ok_or("")
+            .map_err(|_| {
+                anyhow!("setEnvironment not found -- is this WASM built with the OP_NET SDK?")
+            })?
+            .call(&mut vm.store, &[Val::I32(ptr)], &mut [])?)
+    }
+}
+
 impl OpnetContract {
     pub fn send_to_arraybuffer(&mut self, v: &Vec<u8>) -> anyhow::Result<i32> {
         let mut result = [Val::I32(0)];
         self.instance
             .get_func(&mut self.store, "__new")
-            .ok_or("").map_err(|_| {
+            .ok_or("")
+            .map_err(|_| {
                 anyhow!("__new export not found -- is this WASM built with --exportRuntime?")
             })?
-            .call(&mut self.store, &[Val::I32(v.len().try_into()?)], &mut result)?;
-        let ptr: usize = result[0].i32().ok_or("").map_err(|_| anyhow!("result of __new is not an i32"))? as usize;
+            .call(
+                &mut self.store,
+                &[Val::I32(v.len().try_into()?)],
+                &mut result,
+            )?;
+        let ptr: usize = result[0]
+            .i32()
+            .ok_or("")
+            .map_err(|_| anyhow!("result of __new is not an i32"))?
+            as usize;
         let mem = self
             .instance
             .get_memory(&mut self.store, "memory")
-            .ok_or("").map_err(|_| anyhow!("memory segment not foudn"))?;
-        mem.write(&mut self.store, ptr, &v.len().to_le_bytes()).map_err(|_| anyhow!("failed to write ArrayBuffer"))?;
-        mem.write(&mut self.store, ptr + 4, v.as_slice()).map_err(|_| anyhow!("failed to write ArrayBuffer"))?;
+            .ok_or("")
+            .map_err(|_| anyhow!("memory segment not foudn"))?;
+        mem.write(&mut self.store, ptr, &v.len().to_le_bytes())
+            .map_err(|_| anyhow!("failed to write ArrayBuffer"))?;
+        mem.write(&mut self.store, ptr + 4, v.as_slice())
+            .map_err(|_| anyhow!("failed to write ArrayBuffer"))?;
         Ok((ptr + 4).try_into()?)
     }
     pub fn get(address: &Vec<u8>) -> Result<Option<Self>> {
@@ -255,18 +304,6 @@ impl OpnetContract {
     }
     pub fn set_caller(&mut self, address: &Vec<u8>) {
         self.store.data_mut().environment.set_caller(address);
-    }
-    pub fn invoke_set_environment(&mut self) -> Result<()> {
-        let ptr: i32 = { 
-          let input: Vec<u8> = self.store.data_mut().environment.clone().into();
-          self.send_to_arraybuffer(&input)?
-        };
-        Ok(self.instance
-            .get_func(&mut self.store, "setEnvironment")
-            .ok_or("").map_err(|_| {
-              anyhow!("setEnvironment not found -- is this WASM built with the OP_NET SDK?")
-            })?
-            .call(&mut self.store, &[Val::I32(ptr)], &mut [])?)
     }
     pub fn load(address: &Vec<u8>, program: &Vec<u8>) -> Result<Self> {
         let mut config = Config::default();
@@ -288,7 +325,7 @@ impl OpnetContract {
             },
         );
         store.limiter(|state| &mut state.limiter);
-        Store::<State>::set_fuel(&mut store, 100000)?;
+        Store::<State>::set_fuel(&mut store, 100000)?; // TODO: implement gas limits
         let cloned = program.clone();
         let module = Module::new(&engine, &mut &cloned[..])?;
         let mut linker: Linker<State> = Linker::<State>::new(&engine);
@@ -451,10 +488,10 @@ pub fn index_transaction(height: u32, timestamp: u64, transaction: &Transaction)
                         environment.set_callee(&address);
                         environment.set_caller(&address);
                         environment.set_owner(&address);
-                        vm.invoke_set_environment()?
+                        OpnetExportsImpl::set_environment(&mut vm)?
                     }
                     match vm.run((*payload).clone()) {
-                        Ok(_) => {
+                        Ok(_response) => {
                             println!("OP_NET: transaction success");
                             vm.storage.lock().unwrap().flush(); // transaction success -- save updated storage slots
                         }
