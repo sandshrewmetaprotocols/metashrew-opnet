@@ -1,6 +1,5 @@
 use crate::envelope::RawEnvelope;
 use crate::index_pointer::IndexPointer;
-use anyhow;
 use bech32::{hrp, segwit};
 use bitcoin::blockdata::{block::Block, transaction::Transaction};
 use bitcoin::script::Script;
@@ -9,20 +8,22 @@ use hex;
 use libflate::zlib::{Decoder, Encoder};
 use ripemd::Ripemd160;
 use sha3::{Digest, Sha3_256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::sync::{Arc, Mutex};
 use wasmi::*;
+use crate::serialization::{BytesReader};
+use anyhow::{Result, anyhow};
 //use wasmi::module::utils::WasmiValueType;
 
-pub fn index_block(block: Block) -> Result<(), anyhow::Error> {
+pub fn index_block(block: Block) -> Result<()> {
     for transaction in &block.txdata {
         index_transaction(&transaction)?;
     }
     Ok(())
 }
 
-pub fn read_arraybuffer(data: &[u8], data_start: i32) -> Result<Vec<u8>, anyhow::Error> {
+pub fn read_arraybuffer(data: &[u8], data_start: i32) -> Result<Vec<u8>> {
     if data_start < 4 {
         return Err(anyhow::anyhow!("memory error"));
     }
@@ -41,6 +42,7 @@ struct OpnetContract {
 
 struct State {
     address: Vec<u8>,
+    caller: Vec<u8>,
     had_failure: bool,
     storage: Arc<Mutex<StorageView>>,
     call_stack: HashSet<Vec<u8>>,
@@ -51,7 +53,7 @@ const MEMORY_LIMIT: usize = 33554432;
 
 pub struct OpnetHostFunctionsImpl(());
 
-pub fn get_memory<'a>(caller: &mut Caller<'_, State>) -> Result<Memory, anyhow::Error> {
+pub fn get_memory<'a>(caller: &mut Caller<'_, State>) -> Result<Memory> {
     caller
         .get_export("memory")
         .ok_or(anyhow::anyhow!("export was not memory region"))?
@@ -59,13 +61,12 @@ pub fn get_memory<'a>(caller: &mut Caller<'_, State>) -> Result<Memory, anyhow::
         .ok_or(anyhow::anyhow!("export was not memory region"))
 }
 
-fn to_segwit_address(v: &[u8]) -> Result<Vec<u8>, anyhow::Error> {
+fn to_segwit_address(v: &[u8]) -> Result<Vec<u8>> {
     segwit::encode(hrp::BC, segwit::VERSION_1, v)
         .map(|v| v.as_str().as_bytes().to_vec())
         .map_err(|_| anyhow::anyhow!("segwit address encode failed"))
 }
 
-fn 
 
 impl OpnetHostFunctionsImpl {
     fn _abort<'a>(mut caller: Caller<'_, State>) {
@@ -74,58 +75,61 @@ impl OpnetHostFunctionsImpl {
     fn abort<'a>(mut caller: Caller<'_, State>, _: i32, _: i32, _: i32, _: i32) {
         caller.data_mut().had_failure = true;
     }
-    fn sha256<'a>(caller: &mut Caller<'_, State>, v: i32) -> Result<i32, anyhow::Error> {
+    fn sha256<'a>(caller: &mut Caller<'_, State>, v: i32) -> Result<i32> {
         // handle sha256
         let mut hasher = Sha3_256::new();
         let mem = get_memory(caller)?;
         hasher.update(read_arraybuffer(mem.data(&caller), v)?);
         send_to_arraybuffer(caller, &hasher.finalize().to_vec())
     }
-    fn load<'a>(caller: &mut Caller<'_, State>, k: i32) -> Result<i32, anyhow::Error> {
+    fn load<'a>(caller: &mut Caller<'_, State>, k: i32) -> Result<i32> {
         let mem = get_memory(caller)?;
-        let key = {
+        let mut key = {
             let data = mem.data(&caller);
-            BytesReader::from(read_arraybuffer(data, k)?).read_u256()?
+            BytesReader::from(&read_arraybuffer(data, k)?).read_u256()?
         };
-        let value = caller.data_mut().storage.lock().unwrap().get(&key.to_be_bytes());
+        let value = caller.data_mut().storage.lock().unwrap().get(&(&key.to_be_bytes::<32>()).try_into()?);
         send_to_arraybuffer(caller, &value)
     }
-    fn store<'a>(caller: &mut Caller<'_, State>, k: i32) -> Result<(), anyhow::Error> {
+    fn store<'a>(caller: &mut Caller<'_, State>, k: i32) -> Result<()> {
         let mem = get_memory(caller)?;
         let (key, value) = {
-            let reader = BytesReader::from(&read_arraybuffer(mem.data(&caller), k)?);
-            (reader.read_u256(), reader.read_u256())
+            let buffer = read_arraybuffer(mem.data(&caller), k)?;
+            let mut reader = BytesReader::from(&buffer);
+            (reader.read_u256()?, reader.read_u256()?)
         };
-        caller.data_mut().storage.lock().unwrap().set(&key.to_be_bytes(), &value.to_be_bytes());
+        caller.data_mut().storage.lock().unwrap().set(&(&key.to_be_bytes::<32>()).try_into()?, &(&value.to_be_bytes::<32>()).try_into()?);
         Ok(())
     }
-    fn call<'a>(caller: &mut Caller<'_, State>, data: i32) -> Result<i32, anyhow::Error> {
-      let reader = BytesReader::from(&read_arraybuffer(mem.data(&caller), data)?);
-      let (contract_address, calldata) = (reader.read_address(), reader.read_bytes_with_length());
-      if let Some(v) = caller.data().call_stack.get(contract_address) {
+    fn call<'a>(caller: &mut Caller<'_, State>, data: i32) -> Result<i32> {
+      let buffer = read_arraybuffer(get_memory(caller)?.data(&caller), data)?;
+      let mut reader = BytesReader::from(&buffer);
+      let (contract_address, calldata): (Vec<u8>, Vec<u8>) = (reader.read_address()?.as_str().as_bytes().to_vec(), reader.read_bytes_with_length()?);
+      if let Some(v) = caller.data().call_stack.get(&contract_address) {
         return Err(anyhow!("failure -- reentrancy guard"))
       }
       match OpnetContract::get(&contract_address)? {
-        None => Err(anyhow!(format!("failed to call non-existent contract at address {}", contract_address.to_string())))
+        None => Err(anyhow!(format!("failed to call non-existent contract at address {}", String::from_utf8(contract_address)?))),
         Some(mut vm) => {
-          vm.set_caller(vec![]); // TODO: implement
+          vm.set_caller(&vec![]); // TODO: implement
           vm.store.data_mut().address = contract_address.clone();
-          let call_response = vm.run(&calldata)
+          let call_response = vm.run(calldata)?;
+          send_to_arraybuffer(caller, &call_response.response)
           // TODO: encode response
         }
       }
     }
-    fn log<'a>(caller: &mut Caller<'_, State>, v: i32) -> Result<(), anyhow::Error> {
+    fn log<'a>(caller: &mut Caller<'_, State>, v: i32) -> Result<()> {
         crate::stdio::log({
             let mem = get_memory(caller)?;
             Arc::new(read_arraybuffer(mem.data(&caller), v)?)
         });
         Ok(())
     }
-    fn encode_address(caller: &mut Caller<'_, State>, v: i32) -> Result<i32, anyhow::Error> {
+    fn encode_address(caller: &mut Caller<'_, State>, v: i32) -> Result<i32> {
         let mem = get_memory(caller)?;
-        let input = BytesReader::from(read_arraybuffer(mem.data(&caller), v)?).read_bytes_with_length()?;
-        send_to_arraybuffer(caller, &script_pubkey_to_address(&input))
+        let mut input = BytesReader::from(&read_arraybuffer(mem.data(&caller), v)?).read_bytes_with_length()?;
+        send_to_arraybuffer(caller, &script_pubkey_to_address(&input)?)
     }
 }
 
@@ -135,15 +139,25 @@ fn script_pubkey_to_address(input: &[u8]) -> Result<Vec<u8>> {
   to_segwit_address(&hasher.finalize())
 }
 
+struct CallResponse {
+  pub response: Vec<u8>
+}
+
 impl OpnetContract {
-    pub fn get(address: &Vec<u8>) -> Result<Option<Self>, anyhow::Error> {
+    pub fn get(address: &Vec<u8>) -> Result<Option<Self>> {
       let saved = IndexPointer::from_keyword("/contracts/").select(address).get();
       if saved.len() == 0 { Ok(None) }
       else {
         Ok(Some(Self::load(address, &saved)?))
       }
     }
-    pub fn load(address: &Vec<u8>, program: &Vec<u8>) -> Result<Self, anyhow::Error> {
+    pub fn set_callee(&mut self, address: &Vec<u8>) {
+      self.store.data_mut().address = address.clone();
+    }
+    pub fn set_caller(&mut self, address: &Vec<u8>) {
+      self.store.data_mut().caller = address.clone();
+    }
+    pub fn load(address: &Vec<u8>, program: &Vec<u8>) -> Result<Self> {
         let engine = Engine::default();
         let storage = Arc::new(Mutex::new(StorageView::at(
             IndexPointer::from_keyword("/contracts/")
@@ -154,9 +168,10 @@ impl OpnetContract {
             &engine,
             State {
                 address: address.clone(),
+                caller: address.clone(),
                 had_failure: false,
                 limiter: StoreLimitsBuilder::new().memory_size(MEMORY_LIMIT).build(),
-                call_stack: HashMap::<Vec<u8>>::new(),
+                call_stack: HashSet::<Vec<u8>>::new(),
                 storage: storage.clone(),
             },
         );
@@ -186,8 +201,8 @@ impl OpnetContract {
         linker.func_wrap(
             "env",
             "store",
-            |mut caller: Caller<'_, State>, k: i32, v: i32| {
-                if let Err(e) = OpnetHostFunctionsImpl::store(&mut caller, k, v) {
+            |mut caller: Caller<'_, State>, data: i32| {
+                if let Err(e) = OpnetHostFunctionsImpl::store(&mut caller, data) {
                     OpnetHostFunctionsImpl::_abort(caller);
                 }
             },
@@ -226,15 +241,17 @@ impl OpnetContract {
     pub fn reset(&mut self) {
         self.store.data_mut().had_failure = false;
     }
-    pub fn run(&mut self, calldata: Vec<u8>) -> Result<(), anyhow::Error> {
+    pub fn run(&mut self, calldata: Vec<u8>) -> Result<CallResponse> {
         // TODO: call setEnvironment
         // invoke entrypoint
         let had_failure = self.store.data().had_failure;
         self.reset();
         if had_failure {
-            return Err(anyhow::anyhow!("OP_NET: revert"));
+            return Err(anyhow!("OP_NET: revert"));
         } else {
-            return Ok(());
+          Ok(CallResponse {
+            response: vec![]
+          })
         }
     }
 }
@@ -247,15 +264,15 @@ pub struct StorageView {
 pub fn send_to_arraybuffer<'a>(
     caller: &mut Caller<'_, State>,
     v: &Vec<u8>,
-) -> Result<i32, anyhow::Error> {
+) -> Result<i32> {
     let mut result = [Value::I32(0)];
     caller
         .get_export("__new")
-        .ok_or(anyhow::anyhow!(
+        .ok_or(anyhow!(
             "__new export not found -- is this WASM built with --exportRuntime?"
         ))?
         .into_func()
-        .ok_or(anyhow::anyhow!("__new export not a Func"))?
+        .ok_or(anyhow!("__new export not a Func"))?
         .call(
             &mut *caller,
             &[Value::I32(v.len().try_into()?)],
@@ -263,12 +280,12 @@ pub fn send_to_arraybuffer<'a>(
         )?;
     let mem = get_memory(caller)?;
     mem.write(&mut *caller, 4, &v.len().to_le_bytes())
-        .map_err(|_| anyhow::anyhow!("failed to write ArrayBuffer"))?;
+        .map_err(|_| anyhow!("failed to write ArrayBuffer"))?;
     mem.write(&mut *caller, v.len() + 4, v.as_slice())
-        .map_err(|_| anyhow::anyhow!("failed to write ArrayBuffer"))?;
+        .map_err(|_| anyhow!("failed to write ArrayBuffer"))?;
     return Ok(result[0]
         .i32()
-        .ok_or(anyhow::anyhow!("result was not an i32"))?
+        .ok_or(anyhow!("result was not an i32"))?
         + 4);
 }
 
@@ -297,7 +314,7 @@ impl StorageView {
     }
 }
 
-pub fn index_transaction(transaction: &Transaction) -> Result<(), anyhow::Error> {
+pub fn index_transaction(transaction: &Transaction) -> Result<()> {
     for envelope in RawEnvelope::from_transaction(transaction) {
         let payload: Arc<Vec<u8>> = Arc::new(
             envelope
