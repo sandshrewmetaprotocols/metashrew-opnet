@@ -95,8 +95,9 @@ fn initialize() -> () {
 pub extern "C" fn _start() -> () {
     initialize();
     let data = input();
+    let height: u32 = u32::from_le_bytes((&data[0..4]).try_into().unwrap());
     let mut reader = &data[4..];
-    index_block(Block::consensus_decode(&mut reader).unwrap()).unwrap();
+    index_block(height, Block::consensus_decode(&mut reader).unwrap()).unwrap();
     flush();
 }
 

@@ -5,7 +5,7 @@ use bitcoin::blockdata::{block::Block, transaction::Transaction};
 
 use bitcoin::Amount;
 
-use crate::serialization::BytesReader;
+use crate::serialization::{BytesReader, BytesWriter};
 use anyhow::{anyhow, Result};
 use libflate::zlib::Decoder;
 use ripemd::Ripemd160;
@@ -16,9 +16,9 @@ use std::sync::{Arc, Mutex};
 use wasmi::*;
 //use wasmi::module::utils::WasmiValueType;
 
-pub fn index_block(block: Block) -> Result<()> {
+pub fn index_block(height: u32, block: Block) -> Result<()> {
     for transaction in &block.txdata {
-        index_transaction(&transaction)?;
+        index_transaction(height, block.header.time as u64, &transaction)?;
     }
     Ok(())
 }
@@ -34,18 +34,77 @@ pub fn read_arraybuffer(data: &[u8], data_start: i32) -> Result<Vec<u8>> {
     ));
 }
 
+#[derive(Default, Clone)]
+struct OpnetEnvironment {
+    pub current_block: u64,
+    pub timestamp: u64,
+    pub caller: Vec<u8>,
+    pub callee: Vec<u8>,
+    pub owner: Vec<u8>,
+    pub contract_address: Vec<u8>,
+}
+
+impl Into<Vec<u8>> for OpnetEnvironment {
+    fn into(self) -> Vec<u8> {
+        let mut writer = BytesWriter::default();
+        writer.write_address(&self.caller);
+        writer.write_address(&self.callee);
+        writer.write_u64(self.current_block);
+        writer.write_address(&self.owner);
+        writer.write_address(&self.contract_address);
+        writer.write_u64(self.timestamp);
+        writer.0
+    }
+}
+
+impl OpnetEnvironment {
+    pub fn from<'a>(reader: &mut BytesReader<'a>) -> Result<OpnetEnvironment> {
+        let caller: Vec<u8> = reader.read_address()?.into();
+        let callee: Vec<u8> = reader.read_address()?.into();
+        let current_block: u64 = reader.read_u64()?;
+        let owner: Vec<u8> = reader.read_address()?.into();
+        let contract_address: Vec<u8> = reader.read_address()?.into();
+        let timestamp: u64 = reader.read_u64()?;
+        Ok(OpnetEnvironment {
+            current_block,
+            timestamp,
+            caller,
+            callee,
+            owner,
+            contract_address,
+        })
+    }
+    pub fn set_callee(&mut self, v: &Vec<u8>) {
+        self.callee = v.clone();
+    }
+    pub fn set_caller(&mut self, v: &Vec<u8>) {
+        self.caller = v.clone();
+    }
+    pub fn set_owner(&mut self, v: &Vec<u8>) {
+        self.owner = v.clone();
+    }
+    pub fn set_contract_address(&mut self, v: &Vec<u8>) {
+        self.contract_address = v.clone();
+    }
+    pub fn set_timestamp(&mut self, v: u64) {
+        self.timestamp = v;
+    }
+    pub fn set_current_block(&mut self, v: u64) {
+        self.current_block = v;
+    }
+}
+
 struct OpnetContract {
-    instance: InstancePre,
+    instance: Instance,
     store: Store<State>,
     storage: Arc<Mutex<StorageView>>,
 }
 
 struct State {
-    address: Vec<u8>,
-    caller: Vec<u8>,
     had_failure: bool,
     storage: Arc<Mutex<StorageView>>,
     call_stack: HashSet<Vec<u8>>,
+    environment: OpnetEnvironment,
     limiter: StoreLimits,
 }
 
@@ -124,8 +183,14 @@ impl OpnetHostFunctionsImpl {
                 String::from_utf8(contract_address)?
             ))),
             Some(mut vm) => {
-                vm.set_caller(&vec![]); // TODO: implement
-                vm.store.data_mut().address = contract_address.clone();
+                {
+                    let mut environment = caller.data().environment.clone();
+                    environment.set_caller(&caller.data().environment.contract_address); // TODO: implement
+                    environment.set_callee(&caller.data().environment.caller);
+                    environment.set_contract_address(&contract_address);
+                    vm.store.data_mut().environment = environment;
+                }
+                vm.invoke_set_environment()?;
                 let call_response = vm.run(calldata)?;
                 send_to_arraybuffer(caller, &call_response.response)
                 // TODO: encode response
@@ -158,6 +223,23 @@ struct CallResponse {
 }
 
 impl OpnetContract {
+    pub fn send_to_arraybuffer(&mut self, v: &Vec<u8>) -> anyhow::Result<i32> {
+        let mut result = [Val::I32(0)];
+        self.instance
+            .get_func(&mut self.store, "__new")
+            .ok_or("").map_err(|_| {
+                anyhow!("__new export not found -- is this WASM built with --exportRuntime?")
+            })?
+            .call(&mut self.store, &[Val::I32(v.len().try_into()?)], &mut result)?;
+        let ptr: usize = result[0].i32().ok_or("").map_err(|_| anyhow!("result of __new is not an i32"))? as usize;
+        let mem = self
+            .instance
+            .get_memory(&mut self.store, "memory")
+            .ok_or("").map_err(|_| anyhow!("memory segment not foudn"))?;
+        mem.write(&mut self.store, ptr, &v.len().to_le_bytes()).map_err(|_| anyhow!("failed to write ArrayBuffer"))?;
+        mem.write(&mut self.store, ptr + 4, v.as_slice()).map_err(|_| anyhow!("failed to write ArrayBuffer"))?;
+        Ok((ptr + 4).try_into()?)
+    }
     pub fn get(address: &Vec<u8>) -> Result<Option<Self>> {
         let saved = IndexPointer::from_keyword("/contracts/")
             .select(address)
@@ -169,10 +251,22 @@ impl OpnetContract {
         }
     }
     pub fn set_callee(&mut self, address: &Vec<u8>) {
-        self.store.data_mut().address = address.clone();
+        self.store.data_mut().environment.set_callee(address);
     }
     pub fn set_caller(&mut self, address: &Vec<u8>) {
-        self.store.data_mut().caller = address.clone();
+        self.store.data_mut().environment.set_caller(address);
+    }
+    pub fn invoke_set_environment(&mut self) -> Result<()> {
+        let ptr: i32 = { 
+          let input: Vec<u8> = self.store.data_mut().environment.clone().into();
+          self.send_to_arraybuffer(&input)?
+        };
+        Ok(self.instance
+            .get_func(&mut self.store, "setEnvironment")
+            .ok_or("").map_err(|_| {
+              anyhow!("setEnvironment not found -- is this WASM built with the OP_NET SDK?")
+            })?
+            .call(&mut self.store, &[Val::I32(ptr)], &mut [])?)
     }
     pub fn load(address: &Vec<u8>, program: &Vec<u8>) -> Result<Self> {
         let mut config = Config::default();
@@ -186,8 +280,7 @@ impl OpnetContract {
         let mut store = Store::<State>::new(
             &engine,
             State {
-                address: address.clone(),
-                caller: address.clone(),
+                environment: OpnetEnvironment::default(),
                 had_failure: false,
                 limiter: StoreLimitsBuilder::new().memory_size(MEMORY_LIMIT).build(),
                 call_stack: HashSet::<Vec<u8>>::new(),
@@ -253,7 +346,9 @@ impl OpnetContract {
             },
         )?;
         Ok(OpnetContract {
-            instance: linker.instantiate(&mut store, &module)?,
+            instance: linker
+                .instantiate(&mut store, &module)?
+                .ensure_no_start(&mut store)?,
             store,
             storage: storage.clone(),
         })
@@ -322,7 +417,7 @@ impl StorageView {
     }
 }
 
-pub fn index_transaction(transaction: &Transaction) -> Result<()> {
+pub fn index_transaction(height: u32, timestamp: u64, transaction: &Transaction) -> Result<()> {
     for envelope in RawEnvelope::from_transaction(transaction) {
         let payload: Arc<Vec<u8>> = Arc::new(
             envelope
@@ -347,6 +442,17 @@ pub fn index_transaction(transaction: &Transaction) -> Result<()> {
                 table_entry.set(Arc::new(buf));
             } else {
                 if let Ok(mut vm) = OpnetContract::load(&address, &program) {
+                    {
+                        let environment: &mut OpnetEnvironment =
+                            &mut vm.store.data_mut().environment;
+                        environment.set_contract_address(&address);
+                        environment.set_timestamp(timestamp);
+                        environment.set_current_block(height as u64);
+                        environment.set_callee(&address);
+                        environment.set_caller(&address);
+                        environment.set_owner(&address);
+                        vm.invoke_set_environment()?
+                    }
                     match vm.run((*payload).clone()) {
                         Ok(_) => {
                             println!("OP_NET: transaction success");
