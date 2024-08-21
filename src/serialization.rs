@@ -1,5 +1,5 @@
+use anyhow::Result;
 use ruint::Uint;
-use anyhow::{Result};
 use std::ffi::CStr;
 
 pub type U256 = Uint<256, 4>;
@@ -81,65 +81,63 @@ impl BytesWriter {
 }
 
 pub struct BytesReader<'a> {
-  pub slice: &'a [u8],
-  pub pos: usize
+    pub slice: &'a [u8],
+    pub pos: usize,
 }
 
 const ADDRESS_BYTE_LENGTH: usize = 66;
 
 unsafe fn str_from_null_terminated_utf8(s: *const u8) -> Result<String, anyhow::Error> {
-  Ok(CStr::from_ptr(s as *const i8).to_str()?.to_string())
+    Ok(CStr::from_ptr(s as *const i8).to_str()?.to_string())
 }
 
 impl<'a> BytesReader<'a> {
-  pub fn from(slice: &'a [u8]) -> Self {
-    Self {
-      slice,
-      pos: 0
+    pub fn from(slice: &'a [u8]) -> Self {
+        Self { slice, pos: 0 }
     }
-  }
-  pub fn read_u8(&mut self) -> Result<u8> {
-    let value = u8::from_be_bytes((&self.slice[(self.pos)..(self.pos + 1)]).try_into()?);
-    self.pos = self.pos + 1;
-    Ok(value)
-  }
-  pub fn read_u16(&mut self) -> Result<u16> {
-    let value = u16::from_be_bytes((&self.slice[(self.pos)..(self.pos + 2)]).try_into()?);
-    self.pos = self.pos + 2;
-    Ok(value)
-  }
-  pub fn read_u32(&mut self) -> Result<u32> {
-    let value = u32::from_be_bytes((&self.slice[(self.pos)..(self.pos + 4)]).try_into()?);
-    self.pos = self.pos + 4;
-    Ok(value)
-  }
-  pub fn read_u64(&mut self) -> Result<u64> {
-    let value = u64::from_be_bytes((&self.slice[(self.pos)..(self.pos + 8)]).try_into()?);
-    self.pos = self.pos + 8;
-    Ok(value)
-  }
-  pub fn read_u256(&mut self) -> Result<U256> {
-    let value = U256::from_be_bytes::<32>((&self.slice[(self.pos)..(self.pos + 32)]).try_into()?);
-    self.pos = self.pos + 32;
-    Ok(value)
-  }
-  pub fn read_string(&mut self, _len: usize) -> Result<String> {
-    let value = unsafe { str_from_null_terminated_utf8((&self.slice[(self.pos)..]).as_ptr() as *const u8)? };
-    self.pos = self.pos + value.as_str().as_bytes().to_vec().len();
-    Ok(value)
-  }
-  pub fn read_address(&mut self) -> Result<String> {
-    self.read_string(ADDRESS_BYTE_LENGTH)
-  }
-  pub fn read_bytes(&mut self, length: usize) -> Result<Vec<u8>> {
-    let result = (&self.slice[(self.pos)..(self.pos + length)]).try_into()?;
-    self.pos = self.pos + length;
-    return Ok(result);
-  }
-  pub fn read_bytes_with_length(&mut self) -> Result<Vec<u8>> {
-    let length = self.read_u32()?;
-    self.read_bytes(length.try_into()?)
-  }
+    pub fn read_u8(&mut self) -> Result<u8> {
+        let value = u8::from_be_bytes((&self.slice[(self.pos)..(self.pos + 1)]).try_into()?);
+        self.pos = self.pos + 1;
+        Ok(value)
+    }
+    pub fn read_u16(&mut self) -> Result<u16> {
+        let value = u16::from_be_bytes((&self.slice[(self.pos)..(self.pos + 2)]).try_into()?);
+        self.pos = self.pos + 2;
+        Ok(value)
+    }
+    pub fn read_u32(&mut self) -> Result<u32> {
+        let value = u32::from_be_bytes((&self.slice[(self.pos)..(self.pos + 4)]).try_into()?);
+        self.pos = self.pos + 4;
+        Ok(value)
+    }
+    pub fn read_u64(&mut self) -> Result<u64> {
+        let value = u64::from_be_bytes((&self.slice[(self.pos)..(self.pos + 8)]).try_into()?);
+        self.pos = self.pos + 8;
+        Ok(value)
+    }
+    pub fn read_u256(&mut self) -> Result<U256> {
+        let value =
+            U256::from_be_bytes::<32>((&self.slice[(self.pos)..(self.pos + 32)]).try_into()?);
+        self.pos = self.pos + 32;
+        Ok(value)
+    }
+    pub fn read_string(&mut self, _len: usize) -> Result<String> {
+        let value = unsafe {
+            str_from_null_terminated_utf8((&self.slice[(self.pos)..]).as_ptr() as *const u8)?
+        };
+        self.pos = self.pos + value.as_str().as_bytes().to_vec().len();
+        Ok(value)
+    }
+    pub fn read_address(&mut self) -> Result<String> {
+        self.read_string(ADDRESS_BYTE_LENGTH)
+    }
+    pub fn read_bytes(&mut self, length: usize) -> Result<Vec<u8>> {
+        let result = (&self.slice[(self.pos)..(self.pos + length)]).try_into()?;
+        self.pos = self.pos + length;
+        return Ok(result);
+    }
+    pub fn read_bytes_with_length(&mut self) -> Result<Vec<u8>> {
+        let length = self.read_u32()?;
+        self.read_bytes(length.try_into()?)
+    }
 }
-
-
