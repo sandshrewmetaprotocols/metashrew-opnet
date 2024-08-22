@@ -235,27 +235,33 @@ pub struct OpnetEvent {
 }
 
 impl OpnetExportsImpl {
-    pub fn read_method(method: &Vec<u8>, data: &Vec<u8>) -> Result<Vec<u8>> {
-      let mut result = [ Val::I32(0) ];
-      self.instance.get_func(&mut vm.store, "readMethod").ok_or("").map_err(|_| { anyhow!("readMethod not found -- is this WASM built with the OP_NET SDK?") })?.call(&mut vm.store, &[ Val::I32(self.send_to_arraybuffer(method)?), Val::I32(self.send_to_arraybuffer(data)?) ], &mut result)?;
+    pub fn _get_sdk_export(vm: &mut OpnetContract, name: &str) -> Result<Func> {
+      let instance: &mut Instance = &mut vm.instance;
+      let store: &mut Store<State> = &mut vm.store;
+      Ok(instance.get_func(store, name).ok_or("").map_err(|_| { anyhow!(format!("{} not found -- is this WASM built with the OP_NET SDK?", name)) })?)
+    }
+    pub fn _get_sdk_result(vm: &mut OpnetContract, result: &[Val; 1]) -> Result<Vec<u8>> {
       vm.read_arraybuffer(result[0].i32().ok_or("").map_err(|_| anyhow!("result is not an i32"))?)
     }
-    pub fn read_view(method: &Vec<u8>, data: &Vec<u8>) -> Result<Vec<u8>> {
+    pub fn read_method(vm: &mut OpnetContract, method: u32, data: &Vec<u8>) -> Result<Vec<u8>> {
       let mut result = [ Val::I32(0) ];
-      self.instance.get_func(&mut vm.store, "readView").ok_or("").map_err(|_| { anyhow!("readView not found -- is this WASM built with the OP_NET SDK?") })?.call(&mut vm.store, &[ Val::I32(self.send_to_arraybuffer(method)?), Val::I32(self.send_to_arraybuffer(data)?) ], &mut result)?;
-      vm.read_arraybuffer(result[0].i32().ok_or("").map_err(|_| anyhow!("result is not an i32"))?)
+      let func = Self::_get_sdk_export(vm, "readMethod")?;
+      let arg2 = vm.send_to_arraybuffer(data)?;
+      func.call(&mut vm.store, &[ Val::I32(method as i32), Val::I32(arg2) ], &mut result)?;
+      Self::_get_sdk_result(vm, &result)
+    }
+    pub fn read_view(vm: &mut OpnetContract, method: u32) -> Result<Vec<u8>> {
+      let mut result = [ Val::I32(0) ];
+      let func = Self::_get_sdk_export(vm, "readView")?;
+      func.call(&mut vm.store, &[ Val::I32(method as i32) ], &mut result)?;
+      Self::_get_sdk_result(vm, &result)
     }
     pub fn get_events(vm: &mut OpnetContract) -> Result<Vec<OpnetEvent>> {
         let mut result: [ Val; 1 ] = [ Val::I32(0) ];
         
-        vm.instance
-            .get_func(&mut vm.store, "getEvents")
-            .ok_or("")
-            .map_err(|_| {
-                anyhow!("getEvents not found -- is this WASM built with the OP_NET SDK?")
-            })?
-            .call(&mut vm.store, &[], &mut result)?;
-        let buffer = vm.read_arraybuffer(result[0].i32().ok_or("").map_err(|_| anyhow!("result is not an i32"))?)?;
+        let func = Self::_get_sdk_export(vm, "getEvents")?;
+        func.call(&mut vm.store, &[], &mut result)?;
+        let buffer = Self::_get_sdk_result(vm, &result)?;
         let mut reader = BytesReader::from(&buffer);
         let length = reader.read_u16()?;
         let mut events: Vec<OpnetEvent> = vec![];
@@ -272,20 +278,15 @@ impl OpnetExportsImpl {
         }
         Ok(events)
     }
-    pub fn get_view_abi() -> Result<Vec<u32>> {
-        Self::get_abi(vm, "getViewABI")
+    pub fn get_view_abi(vm: &mut OpnetContract) -> Result<Vec<u32>> {
+        Self::_get_abi(vm, "getViewABI")
     }
     pub fn _get_abi(vm: &mut OpnetContract, name: &str) -> Result<Vec<u32>> {
-        let mut result: [ Val; 1 ] = [ Val::I32(0) ];
+        let mut result = [ Val::I32(0) ];
         
-        vm.instance
-            .get_func(&mut vm.store, name)
-            .ok_or("")
-            .map_err(|_| {
-                anyhow!(format!("{} not found -- is this WASM built with the OP_NET SDK?", name))
-            })?
-            .call(&mut vm.store, &[], &mut result)?;
-        let buffer = vm.read_arraybuffer(result[0].i32().ok_or("").map_err(|_| anyhow!("result is not an i32"))?)?;
+        let func = Self::_get_sdk_export(vm, name)?;
+        func.call(&mut vm.store, &[], &mut result)?;
+        let buffer = Self::_get_sdk_result(vm, &result)?;
         let mut reader = BytesReader::from(&buffer);
         let length = reader.read_u16()?;
         let mut result: Vec<u32> = vec![];
@@ -305,13 +306,7 @@ impl OpnetExportsImpl {
             let input: Vec<u8> = vm.store.data_mut().environment.clone().into();
             vm.send_to_arraybuffer(&input)?
         };
-        Ok(vm
-            .instance
-            .get_func(&mut vm.store, "setEnvironment")
-            .ok_or("")
-            .map_err(|_| {
-                anyhow!("setEnvironment not found -- is this WASM built with the OP_NET SDK?")
-            })?
+        Ok(Self::_get_sdk_export(vm, "setEnvironment")?
             .call(&mut vm.store, &[Val::I32(ptr)], &mut [])?)
     }
 }
@@ -454,24 +449,23 @@ impl OpnetContract {
         self.store.data_mut().had_failure = false;
     }
     pub fn run(&mut self, payload: Vec<u8>) -> Result<CallResponse, anyhow::Error> {
-        let selector: u32 = u32::from_be_bytes((&payload[0..4]).try_into()?)?
-        let calldata: Vec<u8> = (&payload[4..]).try_into()?
-        let call_response = if HashSet::<Vec<u32>>::from_iter(OpnetExportsImpl::get_view_abi(self)?.into_iter()).has(&selector) {
-          OpnetExportsImpl::read_view(vm, &selector, &calldata)?
-        } else if HashSet::<Vec<u32>>::from_iter(OpnetExportsImpl::get_write_methods(self)?.into_iter()) {
-          OpnetExportsImpl::read_method(vm, &selector, &calldata)?
+        let selector: u32 = u32::from_be_bytes((&payload[0..4]).try_into()?);
+        let calldata: Vec<u8> = (&payload[4..]).try_into()?;
+        let call_response: Vec<u8> = if HashSet::<u32>::from_iter(OpnetExportsImpl::get_view_abi(self)?.into_iter()).contains(&selector) {
+          OpnetExportsImpl::read_view(self, selector)?
+        } else if HashSet::<u32>::from_iter(OpnetExportsImpl::get_write_methods(self)?.into_iter()).contains(&selector) {
+          OpnetExportsImpl::read_method(self, selector, &calldata)?
         } else {
-          Err(anyhow!("OP_NET: method is not exported by contract"))
-        }
+          return Err(anyhow!("OP_NET: method is not exported by contract"));
+        };
         let had_failure = self.store.data().had_failure;
         self.reset();
-        let result = if self.store.data().had_failure {
-          Err(anyhow!("OP_NET: revert"));
+        if had_failure {
+          Err(anyhow!("OP_NET: revert"))
         } else {
-          Ok(call_response)
+          Ok(CallResponse { response: call_response })
         }
         // handle saving storage
-        result
     }
 }
 
