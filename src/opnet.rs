@@ -230,6 +230,12 @@ impl OpnetHostFunctionsImpl {
         send_to_arraybuffer(caller, &script_pubkey_to_address(&input)?)
     }
     fn deploy_from_address<'a>(caller: &mut Caller<'_, State>, v: i32) -> Result<i32> {
+        let mem = get_memory(caller)?;
+        let (existing_address, salt, bytecode) = {
+          let input = read_arraybuffer(mem.data(&caller), v)?;
+          let mut reader = BytesReader::from(&input);
+          (reader.read_address()?, reader.read_u256()?, reader.read_bytes_with_length()?)
+        };
         Ok(4)
     }
     fn deploy<'a>(caller: &mut Caller<'_, State>, v: i32) -> Result<i32> {
