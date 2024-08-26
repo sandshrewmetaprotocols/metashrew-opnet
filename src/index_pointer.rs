@@ -3,7 +3,7 @@ use crate::{get, set};
 
 use std::sync::Arc;
 
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct IndexPointer(Arc<Vec<u8>>);
 
 impl IndexPointer {
