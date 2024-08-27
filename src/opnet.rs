@@ -269,9 +269,6 @@ impl OpnetHostFunctionsImpl {
         writer.write_address(&contract_address);
         send_to_arraybuffer(caller, &writer.0)
     }
-    fn deploy<'a>(caller: &mut Caller<'_, State>, v: i32) -> Result<i32> {
-        Ok(4)
-    }
 }
 
 fn script_pubkey_to_address(input: &[u8]) -> Result<Vec<u8>> {
@@ -517,11 +514,6 @@ impl OpnetContract {
         )?;
         linker.func_wrap("env", "log", |mut caller: Caller<'_, State>, v: i32| {
             if let Err(_e) = OpnetHostFunctionsImpl::log(&mut caller, v) {
-                OpnetHostFunctionsImpl::_abort(caller);
-            }
-        })?;
-        linker.func_wrap("env", "deploy", |mut caller: Caller<'_, State>, v: i32| {
-            if let Err(_) = OpnetHostFunctionsImpl::deploy(&mut caller, v) {
                 OpnetHostFunctionsImpl::_abort(caller);
             }
         })?;
