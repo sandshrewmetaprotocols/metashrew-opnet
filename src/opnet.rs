@@ -5,7 +5,7 @@ use bitcoin::blockdata::{block::Block, transaction::Transaction};
 
 use bitcoin::Amount;
 
-use crate::serialization::{BytesReader, BytesWriter};
+use crate::serialization::{BytesReader, BytesWriter, U256};
 use anyhow::{anyhow, Result};
 use libflate::zlib::Decoder;
 use ripemd::Ripemd160;
@@ -136,6 +136,18 @@ pub struct StorageView {
     pub contract: ContractStorageView,
 }
 
+pub fn get_contract_seed(deployer_pubkey: &Vec<u8>, bytecode: &Vec<u8>, salt_hash: &Vec<u8>) -> Vec<u8> {
+  let mut hasher = Sha3_256::new();
+  hasher.update(bytecode);
+  let hash: Vec<u8> = hasher.finalize().to_vec();
+  hasher = Sha3_256::new();
+  let mut buffer = deployer_pubkey.clone();
+  buffer.extend(salt_hash);
+  buffer.extend(&hash);
+  hasher.update(&buffer);
+  hasher.finalize().to_vec()
+}
+
 impl StorageView {
     pub fn commit(&mut self) {
         self.global.merge(&self.contract);
@@ -231,12 +243,31 @@ impl OpnetHostFunctionsImpl {
     }
     fn deploy_from_address<'a>(caller: &mut Caller<'_, State>, v: i32) -> Result<i32> {
         let mem = get_memory(caller)?;
-        let (existing_address, salt, bytecode) = {
+        let (existing_address, salt) = {
           let input = read_arraybuffer(mem.data(&caller), v)?;
           let mut reader = BytesReader::from(&input);
-          (reader.read_address()?, reader.read_u256()?, reader.read_bytes_with_length()?)
+          (reader.read_address()?.as_str().as_bytes().to_vec(), reader.read_bytes(32)?)
         };
-        Ok(4)
+        let saved = IndexPointer::from_keyword("/contracts/")
+            .select(&existing_address)
+            .get();
+        if saved.len() == 0 {
+          return Err(anyhow!(format!("no contract storedf at {}", hex::encode(existing_address))));
+        }
+        let virtual_address = get_contract_seed(&caller.data().environment.contract_address.clone(), &saved, &salt);
+        let contract_address = script_pubkey_to_address(&virtual_address)?;
+        let ptr = IndexPointer::from_keyword("/contracts/").select(&contract_address);
+        let bytearray = ptr.get();
+        if bytearray.len() != 0 {
+          Err(anyhow!(format!("contract already deployed to {}", hex::encode(&contract_address))))
+        } else {
+          Ok(())
+        }?;
+        ptr.set(saved);
+        let mut writer = BytesWriter::default();
+        writer.write_u256(&U256::from_be_bytes::<32>(virtual_address.as_slice().try_into()?));
+        writer.write_address(&contract_address);
+        send_to_arraybuffer(caller, &writer.0)
     }
     fn deploy<'a>(caller: &mut Caller<'_, State>, v: i32) -> Result<i32> {
         Ok(4)

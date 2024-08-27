@@ -72,7 +72,7 @@ impl TypedBytesWriter {
     }
     pub fn write_address(&mut self, v: &Address) {
         self.write_u8(OpnetBufferDataType::ADDRESS as u8);
-        self.write_bytes(&self.from_address(v));
+        self.write_bytes(&v.clone());
     }
     pub fn from_address(&self, _v: &Address) -> Vec<u8> {
         vec![]
