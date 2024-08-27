@@ -136,16 +136,20 @@ pub struct StorageView {
     pub contract: ContractStorageView,
 }
 
-pub fn get_contract_seed(deployer_pubkey: &Vec<u8>, bytecode: &Vec<u8>, salt_hash: &Vec<u8>) -> Vec<u8> {
-  let mut hasher = Sha3_256::new();
-  hasher.update(bytecode);
-  let hash: Vec<u8> = hasher.finalize().to_vec();
-  hasher = Sha3_256::new();
-  let mut buffer = deployer_pubkey.clone();
-  buffer.extend(salt_hash);
-  buffer.extend(&hash);
-  hasher.update(&buffer);
-  hasher.finalize().to_vec()
+pub fn get_contract_seed(
+    deployer_pubkey: &Vec<u8>,
+    bytecode: &Vec<u8>,
+    salt_hash: &Vec<u8>,
+) -> Vec<u8> {
+    let mut hasher = Sha3_256::new();
+    hasher.update(bytecode);
+    let hash: Vec<u8> = hasher.finalize().to_vec();
+    hasher = Sha3_256::new();
+    let mut buffer = deployer_pubkey.clone();
+    buffer.extend(salt_hash);
+    buffer.extend(&hash);
+    hasher.update(&buffer);
+    hasher.finalize().to_vec()
 }
 
 impl StorageView {
@@ -208,17 +212,22 @@ impl OpnetHostFunctionsImpl {
         }
         let mut vm = OpnetContract::get(
             &contract_address,
-            Arc::new(Mutex::new(caller.data_mut().storage.lock().unwrap().clone()))
-        )?.ok_or("").map_err(|_| {
-            match String::from_utf8(contract_address.clone()) {
-              Ok(v) => anyhow!(format!("failed to call non-existent contract at address {}", v)),
-              Err(_) => anyhow!("failed to convert contract address from utf-8")
-            }
+            Arc::new(Mutex::new(
+                caller.data_mut().storage.lock().unwrap().clone(),
+            )),
+        )?
+        .ok_or("")
+        .map_err(|_| match String::from_utf8(contract_address.clone()) {
+            Ok(v) => anyhow!(format!(
+                "failed to call non-existent contract at address {}",
+                v
+            )),
+            Err(_) => anyhow!("failed to convert contract address from utf-8"),
         })?;
         {
-          let mut environment = caller.data_mut().environment.clone();
-          environment.set_contract_address(&contract_address.clone());
-          vm.store.data_mut().environment = environment;
+            let mut environment = caller.data_mut().environment.clone();
+            environment.set_contract_address(&contract_address.clone());
+            vm.store.data_mut().environment = environment;
         }
         OpnetExportsImpl::set_environment(&mut vm)?;
         let call_response = vm.run(calldata)?;
@@ -244,28 +253,43 @@ impl OpnetHostFunctionsImpl {
     fn deploy_from_address<'a>(caller: &mut Caller<'_, State>, v: i32) -> Result<i32> {
         let mem = get_memory(caller)?;
         let (existing_address, salt) = {
-          let input = read_arraybuffer(mem.data(&caller), v)?;
-          let mut reader = BytesReader::from(&input);
-          (reader.read_address()?.as_str().as_bytes().to_vec(), reader.read_bytes(32)?)
+            let input = read_arraybuffer(mem.data(&caller), v)?;
+            let mut reader = BytesReader::from(&input);
+            (
+                reader.read_address()?.as_str().as_bytes().to_vec(),
+                reader.read_bytes(32)?,
+            )
         };
         let saved = IndexPointer::from_keyword("/contracts/")
             .select(&existing_address)
             .get();
         if saved.len() == 0 {
-          return Err(anyhow!(format!("no contract storedf at {}", hex::encode(existing_address))));
+            return Err(anyhow!(format!(
+                "no contract storedf at {}",
+                hex::encode(existing_address)
+            )));
         }
-        let virtual_address = get_contract_seed(&caller.data().environment.contract_address.clone(), &saved, &salt);
+        let virtual_address = get_contract_seed(
+            &caller.data().environment.contract_address.clone(),
+            &saved,
+            &salt,
+        );
         let contract_address = script_pubkey_to_address(&virtual_address)?;
         let ptr = IndexPointer::from_keyword("/contracts/").select(&contract_address);
         let bytearray = ptr.get();
         if bytearray.len() != 0 {
-          Err(anyhow!(format!("contract already deployed to {}", hex::encode(&contract_address))))
+            Err(anyhow!(format!(
+                "contract already deployed to {}",
+                hex::encode(&contract_address)
+            )))
         } else {
-          Ok(())
+            Ok(())
         }?;
         ptr.set(saved);
         let mut writer = BytesWriter::default();
-        writer.write_u256(&U256::from_be_bytes::<32>(virtual_address.as_slice().try_into()?));
+        writer.write_u256(&U256::from_be_bytes::<32>(
+            virtual_address.as_slice().try_into()?,
+        ));
         writer.write_address(&contract_address);
         send_to_arraybuffer(caller, &writer.0)
     }
@@ -281,7 +305,7 @@ struct CallResponse {
     pub response: Vec<u8>,
     pub events: Vec<OpnetEvent>,
     pub storage: Arc<Mutex<StorageView>>,
-    pub gas_used: u64
+    pub gas_used: u64,
 }
 
 pub struct OpnetExportsImpl(());
@@ -391,13 +415,16 @@ impl OpnetExportsImpl {
 
 impl OpnetContract {
     pub fn consume_fuel(&mut self, fuel: u64) -> Result<()> {
-      let fuel_remaining = self.store.get_fuel().unwrap();
-      if fuel_remaining < fuel {
-          Err(anyhow!(format!("{} gas remaining but {} consumed by call", fuel_remaining, fuel)))
-      } else {
-          self.store.set_fuel(fuel_remaining - fuel).unwrap();
-          Ok(())
-      }
+        let fuel_remaining = self.store.get_fuel().unwrap();
+        if fuel_remaining < fuel {
+            Err(anyhow!(format!(
+                "{} gas remaining but {} consumed by call",
+                fuel_remaining, fuel
+            )))
+        } else {
+            self.store.set_fuel(fuel_remaining - fuel).unwrap();
+            Ok(())
+        }
     }
     pub fn read_arraybuffer(&mut self, data_start: i32) -> anyhow::Result<Vec<u8>> {
         read_arraybuffer(self.get_memory()?.data(&self.store), data_start)
@@ -549,7 +576,7 @@ impl OpnetContract {
                 .instantiate(&mut store, &module)?
                 .ensure_no_start(&mut store)?,
             store,
-            storage
+            storage,
         })
     }
     pub fn reset(&mut self) {
@@ -578,9 +605,7 @@ impl OpnetContract {
         if had_failure {
             Err(anyhow!("OP_NET: revert"))
         } else {
-            let checkpoint = {
-              self.checkpoint()
-            };
+            let checkpoint = { self.checkpoint() };
             let events = OpnetExportsImpl::get_events(self)?;
             let mut state: &mut State = self.store.data_mut();
             state.storage.lock().unwrap().commit();
